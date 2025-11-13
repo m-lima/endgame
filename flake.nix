@@ -51,20 +51,11 @@
             binary = false;
             features = [ "vendored" ];
             nativeBuildInputs = pkgs: [
-              pkgs.gnumake
-              (pkgs.writeShellScriptBin "gmake" ''exec make $@'')
-              pkgs.llvmPackages.libclang.lib
+              (pkgs.writeShellScriptBin "gmake" ''exec ${pkgs.gnumake}/bin/make $@'')
               pkgs.llvmPackages.clang
-              pkgs.pkg-config
-              pkgs.glibc.dev
             ];
             buildInputs = pkgs: [
-              pkgs.llvmPackages.libclang.lib
-              pkgs.llvmPackages.clang
               pkgs.openssl
-              pkgs.glibc.dev
-              # pkgs.pcre2
-              pkgs.pkg-config
             ];
             overrides = {
               commonArgs = {
@@ -74,8 +65,6 @@
                   "--without-http_gzip_module"
                 ];
                 LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-                # BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=$(dirname $(dirname $(realpath $(which clang))))/../lib/clang/$(clang --version | head -n1 | awk '{print $3}')/include --sysroot=${pkgs.stdenv.cc.libc.dev}";
-                BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.stdenv.cc.libc.dev}";
               };
             };
           }).outputs;
