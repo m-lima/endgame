@@ -32,75 +32,58 @@
         pkgs = nixpkgs.legacyPackages.${system} // {
           overlays = [ fenix.overlays.default ];
         };
+        module = {
+          name = "endgame";
+          meta = {
+            description = "OpenIDC handler for nginx";
+            license = [ pkgs.lib.licenses.mit ];
+          };
+          src = ./.;
+        };
         nginx = pkgs.nginx.override {
           modules = [
             pkgs.nginxModules.moreheaders
-            {
-              name = "endgame";
-              meta = {
-                description = "OpenIDC handler for nginx";
-                license = [ pkgs.lib.licenses.mit ];
-              };
-              src = ./.;
-            }
+            module
           ];
-          # buildPhase = ""; # "runHook preBuild && runHook postBuild";
-          # installPhase = ''
-          #   runHook preInstall
-          #   cp -a $src $out
-          #   runHook postInstall
-          # '';
         };
-        # nginx = pkgs.stdenv.mkDerivation {
-        #   name = "${pkgs.nginx.name}-src";
-        #
-        #   src = pkgs.nginx.src;
-        #
-        #   nativeBuildInputs = [
-        #     pkgs.pcre
-        #   ];
-        #
-        #   configurePhase = "runHook preConfigure && runHook postConfigure";
-        #   buildPhase = "runHook preBuild && runHook postBuild";
-        #   installPhase = ''
-        #     runHook preInstall
-        #     mkdir -p $out
-        #     tar -xzf $src -C $out --strip-components=1
-        #     $out/configure --without-http_gzip_module
-        #     runHook postInstall
-        #   '';
-        # };
         outputs =
           (helper.lib.rust.helper inputs system ./. {
             binary = false;
-            # nativeBuildInputs = pkgs: [ pkgs.nginx.src ];
+            features = [ "vendored" ];
+            nativeBuildInputs = pkgs: [
+              pkgs.gnumake
+              (pkgs.writeShellScriptBin "gmake" ''exec make $@'')
+              pkgs.llvmPackages.libclang.lib
+              pkgs.llvmPackages.clang
+              pkgs.pkg-config
+              pkgs.glibc.dev
+            ];
+            buildInputs = pkgs: [
+              pkgs.llvmPackages.libclang.lib
+              pkgs.llvmPackages.clang
+              pkgs.openssl
+              pkgs.glibc.dev
+              # pkgs.pcre2
+              pkgs.pkg-config
+            ];
             overrides = {
               commonArgs = {
-                NGINX_SOURCE_DIR = nginx;
+                NGX_CONFIGURE_ARGS = builtins.concatStringsSep " " [
+                  "--without-pcre"
+                  "--without-http_rewrite_module"
+                  "--without-http_gzip_module"
+                ];
+                LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+                # BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=$(dirname $(dirname $(realpath $(which clang))))/../lib/clang/$(clang --version | head -n1 | awk '{print $3}')/include --sysroot=${pkgs.stdenv.cc.libc.dev}";
+                BINDGEN_EXTRA_CLANG_ARGS = "--sysroot=${pkgs.stdenv.cc.libc.dev}";
               };
-
-              # devShell = {
-              #   NGINX_SOURCE_DIR = nginx;
-              # };
-
-              # commonArgs =
-              #   default:
-              #   (builtins.removeAttrs default [ "src" ])
-              #   // {
-              #     srcs = [
-              #       default.src
-              #       pkgs.nginx.src
-              #     ];
-              #
-              #     unpackPhase = "ls -lah && false";
-              #   };
             };
           }).outputs;
       in
       outputs
       // {
         packages = outputs.packages // {
-          inherit nginx;
+          inherit nginx module;
         };
       }
     );
