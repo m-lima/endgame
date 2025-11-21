@@ -40,14 +40,35 @@
           };
           src = ./.;
         };
-        nginx = pkgs.nginx.override {
-          modules = [
-            pkgs.nginxModules.moreheaders
-            module
-          ];
+        nginx =
+          (pkgs.nginx.override {
+            modules = [ module ];
+          }).overrideAttrs
+            (prev: {
+              nativeBuildInputs = prev.nativeBuildInputs ++ [ fenix.packages.${system}.stable.minimalToolchain ];
+            });
+        nginx-src = (pkgs.nginx.override { modules = [ ]; }).overrideAttrs {
+          outputs = [ "out" ];
+          installPhase = ''
+            mkdir -p $out
+            cp -a . $out/
+            # ln -s $PWD $out/src
+          '';
         };
-        outputs =
-          (helper.lib.rust.helper inputs system ./. {
+        # nginx-src = pkgs.stdenv.mkDerivation {
+        #   name = "$(pkgs.nginx.name}-src";
+        #   inherit (pkgs.nginx) version src;
+        #
+        #   # dontConfigure = true;
+        #   # dontBuild = true;
+        #
+        #   installPhase = ''
+        #     mkdir -p $out
+        #     cp -r . $out/
+        #   '';
+        # };
+        rust = (
+          helper.lib.rust.helper inputs system ./. {
             binary = false;
             features = [ "vendored" ];
             nativeBuildInputs = pkgs: [
@@ -67,12 +88,13 @@
                 LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
               };
             };
-          }).outputs;
+          }
+        );
       in
-      outputs
+      rust.outputs
       // {
-        packages = outputs.packages // {
-          inherit nginx module;
+        packages = rust.outputs.packages // {
+          inherit nginx module nginx-src;
         };
       }
     );
