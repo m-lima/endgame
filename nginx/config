@@ -1,6 +1,6 @@
-# . $ngx_addon_dir/auto/rust
+. $ngx_addon_dir/auto/rust
 
-ngx_addon_name=ngx_http_endgame
+ngx_addon_name=endgame
 
 # if [ $HTTP = YES ]; then
 #   if [ -n "$ngx_module_link" ]; then
@@ -24,7 +24,11 @@ if [ $HTTP = YES ]; then
   ngx_module_incs=
   ngx_module_deps=
   ngx_module_libs=
+  # ngx_module_link=ADDON
 
+  ngx_module_name=ngx_http_endgame_module
   ngx_rust_target_type=LIB
   ngx_rust_target_name=endgame
+
+  ngx_rust_module
 fi
