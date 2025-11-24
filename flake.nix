@@ -28,30 +28,34 @@
     }@inputs:
     flake-utils.lib.eachDefaultSystem (
       system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system} // {
-          overlays = [ fenix.overlays.default ];
-        };
-        module = {
-          name = "endgame";
-          meta = {
-            description = "OpenIDC handler for nginx";
-            license = [ pkgs.lib.licenses.mit ];
-          };
-          src = ./.;
-        };
-        rust = (
-          helper.lib.rust.helper inputs system ./. {
-            binary = false;
-            bindgen = true;
-          }
-        );
-      in
-      rust.outputs
-      // {
-        packages = rust.outputs.packages // {
-          inherit module;
-        };
-      }
+      # let
+      #   pkgs = nixpkgs.legacyPackages.${system} // {
+      #     overlays = [ fenix.overlays.default ];
+      #   };
+      #   module = {
+      #     name = "endgame";
+      #     meta = {
+      #       description = "OpenIDC handler for nginx";
+      #       license = [ pkgs.lib.licenses.mit ];
+      #     };
+      #     src = ./.;
+      #   };
+      #   rust = (
+      #     helper.lib.rust.helper inputs system ./. {
+      #       binary = false;
+      #       bindgen = true;
+      #     }
+      #   );
+      # in
+      # rust.outputs
+      # // {
+      #   packages = rust.outputs.packages // {
+      #     inherit module;
+      #   };
+      # }
+      (helper.lib.rust.helper inputs system ./. {
+        binary = false;
+        bindgen = true;
+      }).outputs
     );
 }
