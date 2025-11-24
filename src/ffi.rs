@@ -54,12 +54,11 @@ impl From<&'static str> for CSlice {
 
 impl From<CSlice> for Option<&'_ [u8]> {
     fn from(value: CSlice) -> Self {
-        use std::ops::Not;
-        value
-            .ptr
-            .is_null()
-            .not()
-            .then_some(unsafe { std::slice::from_raw_parts(value.ptr, value.len) })
+        if value.ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(value.ptr, value.len) })
+        }
     }
 }
 

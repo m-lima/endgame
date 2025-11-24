@@ -39,6 +39,19 @@ Error endgame_encrypt_raw(const struct Key *key, struct CSlice src, struct RustS
 
 Error endgame_decrypt_raw(const struct Key *key, struct CSlice src, struct RustSlice *dst);
 
+Error endgame_encrypt_header(const struct Key *key,
+                             struct CSlice email,
+                             struct CSlice given_name,
+                             struct CSlice family_name,
+                             struct RustSlice *dst);
+
+Error endgame_decrypt_header(const struct Key *key,
+                             struct CSlice src,
+                             uint64_t *timestamp,
+                             struct RustSlice *email,
+                             struct RustSlice *given_name,
+                             struct RustSlice *family_name);
+
 #if defined(ENDGAME_BASE64)
 RustError endgame_base64_into_key(struct KeyBase64 self, struct Key *dst);
 #endif
