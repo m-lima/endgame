@@ -2,8 +2,6 @@
 
 mod core;
 
+pub mod base64;
 pub mod ffi;
 pub mod nginx;
-
-#[cfg(feature = "base64")]
-pub mod base64;

@@ -56,11 +56,11 @@
     },
     "helper": {
       "locked": {
-        "lastModified": 1763046330,
-        "narHash": "sha256-dMCDkE+eU7vhkYbCJ7YPIPm1sJfVLQ5qboeeMgSN8zo=",
+        "lastModified": 1763999089,
+        "narHash": "sha256-zAu9u8zg3hVu9NkVTwipzoPAoEc4seOmAGp23FSZDW0=",
         "owner": "m-lima",
         "repo": "nix-template",
-        "rev": "ba5d0618e9176d95713bb8b060ca95eca9c30d87",
+        "rev": "a6600954ae2b4db07e2ff73e9688d1b54ef01d89",
         "type": "github"
       },
       "original": {

@@ -70,7 +70,7 @@ pub extern "C" fn endgame_decrypt_raw(key: &Key, src: CSlice, dst: &mut RustSlic
 
 #[must_use]
 #[unsafe(no_mangle)]
-pub extern "C" fn endgame_encrypt_header(
+pub extern "C" fn endgame_encrypt(
     key: &Key,
     email: CSlice,
     given_name: CSlice,
@@ -81,20 +81,32 @@ pub extern "C" fn endgame_encrypt_header(
         return Error::from("Destination is not null");
     }
 
-    let Some(email) = email.as_option() else {
+    let Some(email) = email
+        .as_option()
+        .map(<[u8]>::trim_ascii)
+        .filter(|s| !s.is_empty())
+    else {
         return Error::from("Email is null");
     };
 
-    let given_name = given_name.as_option();
-    let family_name = family_name.as_option();
+    let given_name = given_name
+        .as_option()
+        .map(<[u8]>::trim_ascii)
+        .filter(|s| !s.is_empty());
+    let family_name = family_name
+        .as_option()
+        .map(<[u8]>::trim_ascii)
+        .filter(|s| !s.is_empty());
 
-    let timestamp = std::time::SystemTime::now()
+    let Ok(now) = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-        .to_ne_bytes();
+        .map(|d| d.as_secs().to_ne_bytes())
+    else {
+        return Error::from("Could not generate timestamp");
+    };
 
     let mut buffer = Vec::with_capacity(
-        timestamp.len()
+        now.len()
             + size_of::<usize>()
             + email.len()
             + size_of::<usize>()
@@ -102,7 +114,7 @@ pub extern "C" fn endgame_encrypt_header(
             + size_of::<usize>()
             + family_name.map_or(0, <[u8]>::len),
     );
-    buffer.extend_from_slice(&timestamp);
+    buffer.extend_from_slice(&now);
     buffer.extend_from_slice(&email.len().to_ne_bytes());
     buffer.extend_from_slice(email);
     if let Some(slice) = given_name {
@@ -129,10 +141,10 @@ pub extern "C" fn endgame_encrypt_header(
 
 #[must_use]
 #[unsafe(no_mangle)]
-pub extern "C" fn endgame_decrypt_header(
+pub extern "C" fn endgame_decrypt_cookie(
     key: &Key,
     src: CSlice,
-    timestamp: &mut u64,
+    max_age_secs: u64,
     email: &mut RustSlice,
     given_name: &mut RustSlice,
     family_name: &mut RustSlice,
@@ -153,52 +165,57 @@ pub extern "C" fn endgame_decrypt_header(
         return Error::from("Source is null");
     };
 
-    match crate::core::decrypt(&key.bytes, src) {
-        Ok(payload) => {
-            let mut start = 0;
-            let mut end = size_of::<u64>();
-            let mut bytes = [0; size_of::<u64>()];
-            bytes.copy_from_slice(&payload[start..end]);
-            *timestamp = u64::from_ne_bytes(bytes);
+    let Ok(min_timestamp) = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() - max_age_secs)
+    else {
+        return Error::from("Could not generate timestamp");
+    };
 
-            start = end;
-            end += size_of::<usize>();
+    let payload = match crate::core::decrypt(&key.bytes, src) {
+        Ok(payload) => payload,
+        Err(err) => return Error::from(err.as_str()),
+    };
 
-            let mut bytes = [0; size_of::<usize>()];
-            bytes.copy_from_slice(&payload[start..end]);
-            let len = usize::from_ne_bytes(bytes);
+    let mut bytes = [0; size_of::<u64>()];
+    bytes.copy_from_slice(&payload[..size_of::<u64>()]);
+    let timestamp = u64::from_ne_bytes(bytes);
 
-            start = end;
-            end += len;
+    if timestamp > min_timestamp {
+        let mut start = size_of::<u64>();
+        let mut end = start + size_of::<usize>();
 
-            *email = Vec::from(&payload[start..end]).into();
+        let mut bytes = [0; size_of::<usize>()];
+        bytes.copy_from_slice(&payload[start..end]);
+        let len = usize::from_ne_bytes(bytes);
 
-            start = end;
-            end += size_of::<usize>();
+        start = end;
+        end += len;
 
-            let mut bytes = [0; size_of::<usize>()];
-            bytes.copy_from_slice(&payload[start..end]);
-            let len = usize::from_ne_bytes(bytes);
+        *email = Vec::from(&payload[start..end]).into();
 
-            start = end;
-            end += len;
+        start = end;
+        end += size_of::<usize>();
 
-            *given_name = Vec::from(&payload[start..end]).into();
+        bytes.copy_from_slice(&payload[start..end]);
+        let len = usize::from_ne_bytes(bytes);
 
-            start = end;
-            end += size_of::<usize>();
+        start = end;
+        end += len;
 
-            let mut bytes = [0; size_of::<usize>()];
-            bytes.copy_from_slice(&payload[start..end]);
-            let len = usize::from_ne_bytes(bytes);
+        *given_name = Vec::from(&payload[start..end]).into();
 
-            start = end;
-            end += len;
+        start = end;
+        end += size_of::<usize>();
 
-            *family_name = Vec::from(&payload[start..end]).into();
+        bytes.copy_from_slice(&payload[start..end]);
+        let len = usize::from_ne_bytes(bytes);
 
-            Error::default()
-        }
-        Err(err) => Error::from(err.as_str()),
+        start = end;
+        end += len;
+
+        *family_name = Vec::from(&payload[start..end]).into();
     }
+
+    Error::default()
 }

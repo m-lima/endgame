@@ -40,63 +40,17 @@
           };
           src = ./.;
         };
-        nginx =
-          (pkgs.nginx.override {
-            modules = [ module ];
-          }).overrideAttrs
-            (prev: {
-              nativeBuildInputs = prev.nativeBuildInputs ++ [ fenix.packages.${system}.stable.minimalToolchain ];
-            });
-        nginx-src = (pkgs.nginx.override { modules = [ ]; }).overrideAttrs {
-          outputs = [ "out" ];
-          installPhase = ''
-            mkdir -p $out
-            cp -a . $out/
-            # ln -s $PWD $out/src
-          '';
-        };
-        # nginx-src = pkgs.stdenv.mkDerivation {
-        #   name = "$(pkgs.nginx.name}-src";
-        #   inherit (pkgs.nginx) version src;
-        #
-        #   # dontConfigure = true;
-        #   # dontBuild = true;
-        #
-        #   installPhase = ''
-        #     mkdir -p $out
-        #     cp -r . $out/
-        #   '';
-        # };
         rust = (
           helper.lib.rust.helper inputs system ./. {
             binary = false;
-            features = [ "vendored" ];
-            bindgen = ./include/endgame.h;
-            nativeBuildInputs = pkgs: [
-              (pkgs.writeShellScriptBin "gmake" ''exec ${pkgs.gnumake}/bin/make $@'')
-              pkgs.llvmPackages.clang
-            ];
-            buildInputs = pkgs: [
-              pkgs.openssl
-            ];
-            overrides = {
-              commonArgs = {
-                NGX_CONFIGURE_ARGS = builtins.concatStringsSep " " [
-                  "--without-pcre"
-                  "--without-http_rewrite_module"
-                  "--without-http_gzip_module"
-                ];
-                LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-                C_INCLUDE_PATH = "include:${pkgs.glibc.dev}/include";
-              };
-            };
+            bindgen = true;
           }
         );
       in
       rust.outputs
       // {
         packages = rust.outputs.packages // {
-          inherit nginx module nginx-src;
+          inherit module;
         };
       }
     );

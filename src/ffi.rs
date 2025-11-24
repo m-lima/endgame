@@ -27,6 +27,12 @@ impl CSlice {
     pub extern "C" fn endgame_c_slice_new(ptr: *const u8, len: usize) -> Self {
         Self { ptr, len }
     }
+
+    #[must_use]
+    #[unsafe(no_mangle)]
+    pub extern "C" fn endgame_c_slice_trim(self) -> Self {
+        self.as_option().map_or(self, |s| s.trim_ascii().into())
+    }
 }
 
 impl CSlice {
