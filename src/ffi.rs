@@ -31,39 +31,31 @@ impl CSlice {
     #[must_use]
     #[unsafe(no_mangle)]
     pub extern "C" fn endgame_c_slice_trim(self) -> Self {
-        self.as_option().map_or(self, |s| s.trim_ascii().into())
+        self.as_option().map_or(self, |s| Self::new(s.trim_ascii()))
     }
 }
 
 impl CSlice {
-    #[inline]
     #[must_use]
-    pub fn as_option<'a>(self) -> Option<&'a [u8]> {
-        self.into()
-    }
-}
-
-impl From<&[u8]> for CSlice {
-    fn from(value: &[u8]) -> Self {
+    pub const fn new(value: &'static [u8]) -> Self {
         Self {
             ptr: value.as_ptr(),
             len: value.len(),
         }
     }
-}
 
-impl From<&'static str> for CSlice {
-    fn from(value: &'static str) -> Self {
-        value.as_bytes().into()
+    #[inline]
+    #[must_use]
+    pub const fn str(value: &'static str) -> Self {
+        Self::new(value.as_bytes())
     }
-}
 
-impl From<CSlice> for Option<&'_ [u8]> {
-    fn from(value: CSlice) -> Self {
-        if value.ptr.is_null() {
+    #[must_use]
+    pub const fn as_option<'a>(self) -> Option<&'a [u8]> {
+        if self.ptr.is_null() {
             None
         } else {
-            Some(unsafe { std::slice::from_raw_parts(value.ptr, value.len) })
+            Some(unsafe { std::slice::from_raw_parts(self.ptr, self.len) })
         }
     }
 }
@@ -113,9 +105,10 @@ impl From<String> for RustSlice {
     }
 }
 
-impl<T: Into<CSlice>> From<T> for Error {
-    fn from(value: T) -> Self {
-        Self(value.into())
+impl Error {
+    #[must_use]
+    pub const fn new(msg: &'static str) -> Self {
+        Self(CSlice::new(msg.as_bytes()))
     }
 }
 
