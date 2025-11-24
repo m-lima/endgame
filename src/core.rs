@@ -13,7 +13,7 @@ pub fn encrypt<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
             vec.extend(encrypted);
             vec
         })
-        .map_err(Error::Aead)
+        .map_err(Error::Encryption)
 }
 
 pub fn decrypt<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
@@ -36,13 +36,24 @@ pub fn decrypt<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
     #[allow(deprecated)]
     let nonce = chacha::XNonce::from_slice(nonce);
 
-    chacha::aead::Aead::decrypt(&cipher, nonce, payload).map_err(Error::Aead)
+    chacha::aead::Aead::decrypt(&cipher, nonce, payload).map_err(Error::Decryption)
 }
 
 #[derive(Debug, Clone)]
 pub enum Error {
-    Aead(chacha::Error),
+    Encryption(chacha::Error),
+    Decryption(chacha::Error),
     Nonce,
+}
+
+impl Error {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Encryption(_) => "Failed to encrypt",
+            Self::Decryption(_) => "Failed to decrypt",
+            Self::Nonce => "Payload not large enough to contain the 24-byte nonce",
+        }
+    }
 }
 
 impl std::error::Error for Error {}
@@ -50,8 +61,8 @@ impl std::error::Error for Error {}
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Aead(error) => error.fmt(f),
-            Self::Nonce => f.write_str("Payload not large enough to contain the 24-byte nonce"),
+            Self::Encryption(error) | Self::Decryption(error) => error.fmt(f),
+            Self::Nonce => f.write_str(Self::Nonce.as_str()),
         }
     }
 }

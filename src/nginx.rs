@@ -1,4 +1,4 @@
-use crate::ffi::{CSlice, RustSlice};
+use crate::ffi::{CSlice, Error, RustSlice};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -29,17 +29,41 @@ impl<T: Into<[u8; 24]>> From<T> for Nonce {
 }
 
 #[must_use]
-#[unsafe(export_name = "endgame_encrypt_raw")]
-pub extern "C" fn encrypt_raw(key: &Key, data: CSlice) -> RustSlice {
-    data.as_option()
-        .and_then(|d| crate::core::encrypt(&key.bytes, d).ok())
-        .map_or_else(RustSlice::default, RustSlice::from)
+#[unsafe(no_mangle)]
+pub extern "C" fn endgame_encrypt_raw(key: &Key, src: CSlice, dst: &mut RustSlice) -> Error {
+    if !dst.ptr.is_null() {
+        return Error::from("Destination is not null");
+    }
+
+    let Some(src) = src.as_option() else {
+        return Error::from("Source is null");
+    };
+
+    match crate::core::encrypt(&key.bytes, src) {
+        Ok(payload) => {
+            *dst = RustSlice::from(payload);
+            Error::default()
+        }
+        Err(err) => Error::from(err.as_str()),
+    }
 }
 
 #[must_use]
-#[unsafe(export_name = "endgame_decrypt_raw")]
-pub extern "C" fn decrypt_raw(key: &Key, data: CSlice) -> RustSlice {
-    data.as_option()
-        .and_then(|d| crate::core::decrypt(&key.bytes, d).ok())
-        .map_or_else(RustSlice::default, RustSlice::from)
+#[unsafe(no_mangle)]
+pub extern "C" fn endgame_decrypt_raw(key: &Key, src: CSlice, dst: &mut RustSlice) -> Error {
+    if !dst.ptr.is_null() {
+        return Error::from("Destination is not null");
+    }
+
+    let Some(src) = src.as_option() else {
+        return Error::from("Source is null");
+    };
+
+    match crate::core::decrypt(&key.bytes, src) {
+        Ok(payload) => {
+            *dst = RustSlice::from(payload);
+            Error::default()
+        }
+        Err(err) => Error::from(err.as_str()),
+    }
 }

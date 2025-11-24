@@ -1,21 +1,25 @@
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct CSlice {
-    ptr: *const u8,
-    len: usize,
+    pub ptr: *const u8,
+    pub len: usize,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct RustSlice {
-    ptr: *const u8,
-    len: usize,
-    cap: usize,
+    pub ptr: *const u8,
+    pub len: usize,
+    pub cap: usize,
 }
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default)]
-pub struct Error(pub RustSlice);
+pub struct Error(pub CSlice);
+
+#[repr(transparent)]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct RustError(pub RustSlice);
 
 impl CSlice {
     #[must_use]
@@ -39,6 +43,12 @@ impl From<&[u8]> for CSlice {
             ptr: value.as_ptr(),
             len: value.len(),
         }
+    }
+}
+
+impl From<&'static str> for CSlice {
+    fn from(value: &'static str) -> Self {
+        value.as_bytes().into()
     }
 }
 
@@ -70,9 +80,12 @@ impl RustSlice {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_rust_slice_free(self) {
-        if !self.ptr.is_null() {
+    pub extern "C" fn endgame_rust_slice_free(&mut self) {
+        if !self.ptr.is_null() && self.cap > 0 {
             drop(unsafe { Vec::from_raw_parts(self.ptr.cast_mut(), self.len, self.cap) });
+            self.ptr = std::ptr::null();
+            self.len = 0;
+            self.cap = 0;
         }
     }
 }
@@ -92,5 +105,17 @@ impl From<Vec<u8>> for RustSlice {
 impl From<String> for RustSlice {
     fn from(value: String) -> Self {
         value.into_bytes().into()
+    }
+}
+
+impl<T: Into<CSlice>> From<T> for Error {
+    fn from(value: T) -> Self {
+        Self(value.into())
+    }
+}
+
+impl<T: Into<RustSlice>> From<T> for RustError {
+    fn from(value: T) -> Self {
+        Self(value.into())
     }
 }
