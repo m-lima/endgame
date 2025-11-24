@@ -2,6 +2,3 @@ language = "C"
 pragma_once = true
 sys_includes = ["stdint.h"]
 no_includes = true
-
-[defines]
-"feature = base64" = "ENDGAME_BASE64"
