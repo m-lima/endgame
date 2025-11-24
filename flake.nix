@@ -71,6 +71,7 @@
           helper.lib.rust.helper inputs system ./. {
             binary = false;
             features = [ "vendored" ];
+            bindgen = ./include/endgame.h;
             nativeBuildInputs = pkgs: [
               (pkgs.writeShellScriptBin "gmake" ''exec ${pkgs.gnumake}/bin/make $@'')
               pkgs.llvmPackages.clang
@@ -86,6 +87,7 @@
                   "--without-http_gzip_module"
                 ];
                 LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+                C_INCLUDE_PATH = "include:${pkgs.glibc.dev}/include";
               };
             };
           }
