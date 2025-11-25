@@ -28,8 +28,6 @@ typedef struct CSlice Error;
 
 RustError endgame_base64_into_key(struct KeyBase64 self, struct Key *dst);
 
-struct CSlice endgame_c_slice_new(const uint8_t *ptr, uintptr_t len);
-
 struct CSlice endgame_c_slice_trim(struct CSlice self);
 
 struct RustSlice endgame_rust_slice_null(void);

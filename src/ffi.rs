@@ -24,12 +24,6 @@ pub struct RustError(pub RustSlice);
 impl CSlice {
     #[must_use]
     #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_c_slice_new(ptr: *const u8, len: usize) -> Self {
-        Self { ptr, len }
-    }
-
-    #[must_use]
-    #[unsafe(no_mangle)]
     pub extern "C" fn endgame_c_slice_trim(self) -> Self {
         self.as_option().map_or(self, |s| Self::new(s.trim_ascii()))
     }
