@@ -58,17 +58,67 @@
             touch "$out/ngx_auto_headers.h"
           '';
         };
+        docker = pkgs.dockerTools.buildImage {
+          name = "${pkgs.nginx.pname}-${rust.packages.default.pname}";
+          tag = rust.packages.default.version;
+          copyToRoot = [ nginx ];
+          runAsRoot = ''
+            #!${pkgs.runtimeShell}
+            mkdir -p /etc
+            echo -n 'nobody:x:65534:65534:nobody:/:/sbin/nologin' > /etc/passwd
+            echo -n 'nogroup:x:65533:\n' > /etc/group
+          '';
+          config = {
+            Cmd = [
+              "nginx"
+              "-e"
+              "/dev/stderr"
+              "-c"
+              "${pkgs.writeText "conf/nginx.conf" ''
+                daemon off;
+                pid /tmp/endgame.pid;
+
+                events {}
+                http {
+                  log_format main '$host '
+                    '- $remote_addr $request_method $request_uri ''${request_length}b '
+                    '- $status ''${bytes_sent}b ''${request_time}s '
+                    '- $http_user_agent';
+                  access_log syslog:server=unix:/dev/log main;
+
+                  server {
+                    listen 0.0.0.0:80 default_server;
+                    listen [::0]:80 default_server;
+                    server_name localhost;
+                    location / {
+                      return 200;
+                    }
+                  }
+                }
+              ''}"
+            ];
+          };
+        };
         rust =
           (helper.lib.rust.helper inputs system ./. {
             binary = false;
             bindgen = true;
+            devPackages =
+              let
+                policy = pkgs.writeText "policy.json" ''{ "default": [ { "type": "insecureAcceptAnything" } ] }'';
+              in
+              pkgs: [
+                pkgs.podman
+                (pkgs.writeShellScriptBin "podman-build-nix" "podman build --signature-policy ${policy} $@")
+                (pkgs.writeShellScriptBin "podman-load-nix" "podman load --signature-policy ${policy} < ${docker}")
+              ];
             overrides.commonArgs.C_INCLUDE_PATH = "${nginx-src}:${./include}";
           }).outputs;
       in
       rust
       // {
         packages = rust.packages // {
-          inherit nginx nginx-src;
+          inherit nginx nginx-src docker;
         };
       }
     );
