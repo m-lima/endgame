@@ -31,9 +31,9 @@ int test_header(Key key) {
 
   CSlice param = {.ptr = encrypted.ptr, .len = encrypted.len};
 
-  RustSlice out_email = endgame_rust_slice_null();
-  RustSlice out_given = endgame_rust_slice_null();
-  RustSlice out_family = endgame_rust_slice_null();
+  RustSlice out_email = endgame_rust_slice_null(),
+            out_given = endgame_rust_slice_null(),
+            out_family = endgame_rust_slice_null();
   error = endgame_decrypt(&key, param, 30, &out_email, &out_given, &out_family);
   if (error.ptr != NULL) {
     printf("Error: %.*s\n", uintptr_t_to_int(error.len), error.ptr);

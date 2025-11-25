@@ -163,36 +163,3 @@ pub extern "C" fn endgame_decrypt(
 
     Error::default()
 }
-
-// trait Serde {
-//     fn size(&self) -> usize;
-//     fn write(&self, buffer: &mut Vec<u8>);
-//     fn read(&self, buffer: &mut Vec<u8>);
-// }
-//
-// impl Serde for &[u8] {
-//     fn size(&self) -> usize {
-//         size_of::<usize>() + self.len()
-//     }
-//
-//     fn write(&self, buffer: &mut Vec<u8>) {
-//         buffer.extend_from_slice(&self.len().to_ne_bytes());
-//         buffer.extend_from_slice(self);
-//     }
-// }
-//
-// impl Serde for Option<&[u8]> {
-//     fn size(&self) -> usize {
-//         match self {
-//             Some(slice) => slice.size(),
-//             None => size_of::<usize>(),
-//         }
-//     }
-//
-//     fn write(&self, buffer: &mut Vec<u8>) {
-//         match self {
-//             Some(slice) => slice.write(buffer),
-//             None => 0_usize.to_ne_bytes().write(buffer),
-//         }
-//     }
-// }
