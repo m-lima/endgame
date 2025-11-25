@@ -43,7 +43,7 @@
           modules = [ module ];
         };
         nginx-src = pkgs.stdenvNoCC.mkDerivation {
-          name = "$(pkgs.nginx.name}-src";
+          name = "${pkgs.nginx.name}-src";
           inherit (pkgs.nginx) version src;
 
           dontConfigure = true;
