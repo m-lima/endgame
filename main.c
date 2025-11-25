@@ -11,9 +11,9 @@ int uintptr_t_to_int(uintptr_t i) {
 }
 
 int test_header(Key key) {
-  CSlice in_email = endgame_c_slice_new("email", 5);
+  CSlice in_email = endgame_c_slice("email");
   CSlice in_given = endgame_c_slice_new(NULL, 0);
-  CSlice in_family = endgame_c_slice_new("  family	", 9);
+  CSlice in_family = endgame_c_slice("  family	");
 
   printf("In Email:   %.*s\n", uintptr_t_to_int(in_email.len), in_email.ptr);
   printf("In Given:   %.*s\n", uintptr_t_to_int(in_given.len), in_given.ptr);

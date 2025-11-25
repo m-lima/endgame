@@ -2,3 +2,4 @@ language = "C"
 pragma_once = true
 sys_includes = ["stdint.h"]
 no_includes = true
+after_includes = "#define endgame_c_slice(str) (CSlice){.ptr = (const uint8_t *)str, .len = sizeof(str) - 1}"

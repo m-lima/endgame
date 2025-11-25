@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#define endgame_c_slice(str) (CSlice){.ptr = (const uint8_t *)str, .len = sizeof(str) - 1}
 
 typedef struct RustSlice {
   const uint8_t *ptr;
