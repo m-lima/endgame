@@ -1,3 +1,4 @@
+// TODO: Match ngx_str_t
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct CSlice {

@@ -12,20 +12,23 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r);
 static void *ngx_http_endgame_create_conf(ngx_conf_t *cf);
 static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
                                          void *child);
-static char *ngx_http_endgame_set_session_name(ngx_conf_t *cf, void *post,
-                                               void *data);
+static char *ngx_http_endgame_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
+                                      void *conf);
+static char *ngx_http_endgame_set_nonempty_str(ngx_conf_t *cf,
+                                               ngx_command_t *cmd, void *conf);
+static char *ngx_http_endgame_set_session_secret(ngx_conf_t *cf,
+                                                 ngx_command_t *cmd,
+                                                 void *conf);
 
 typedef struct {
   ngx_flag_t enable;
   ngx_str_t session_name;
   Key session_secret;
+  ngx_flag_t session_secret_set;
   time_t session_ttl;
   ngx_str_t session_domain;
   ngx_str_t header_prefix;
 } ngx_http_endgame_conf_t;
-
-static ngx_conf_post_t ngx_http_endgame_set_session_name_post = {
-    ngx_http_endgame_set_session_name};
 
 static ngx_command_t ngx_http_endgame_commands[] = {
     {ngx_string("endgame"),
@@ -33,22 +36,30 @@ static ngx_command_t ngx_http_endgame_commands[] = {
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, enable), NULL},
     {ngx_string("endgame_session_name"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-     ngx_conf_set_str_slot, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_endgame_conf_t, session_name),
-     &ngx_http_endgame_set_session_name_post},
-    {ngx_string("endgame_session_domain"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-     ngx_conf_set_str_slot, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_endgame_conf_t, session_domain), NULL},
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE1,
+     ngx_http_endgame_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, session_name), NULL},
+    {ngx_string("endgame_session_secret"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE2,
+     ngx_http_endgame_set_session_secret, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, session_secret), NULL},
     {ngx_string("endgame_session_ttl"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE1,
      ngx_conf_set_sec_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, session_ttl), NULL},
     {ngx_string("endgame_session_domain"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-     ngx_conf_set_str_slot, NGX_HTTP_LOC_CONF_OFFSET,
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE1,
+     ngx_http_endgame_set_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, session_domain), NULL},
+    {ngx_string("endgame_header_prefix"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE1,
+     ngx_http_endgame_set_str, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, header_prefix), NULL},
     ngx_null_command};
 
 static ngx_http_module_t ngx_http_endgame_module_ctx = {
@@ -88,8 +99,6 @@ static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf) {
 
   *h = ngx_http_endgame_handler;
 
-  ngx_log_error(NGX_LOG_NOTICE, cf->log, 0, "Initialized endgame");
-
   return NGX_OK;
 }
 
@@ -106,6 +115,10 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "declined");
     return NGX_DECLINED;
   }
+
+  ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "endgaaaaayyme %d %d %d %d",
+                egcf->session_secret.bytes[0], egcf->session_secret.bytes[1],
+                egcf->session_secret.bytes[2], egcf->session_secret.bytes[3]);
 
   cookie = ngx_http_parse_multi_header_lines(r, r->headers_in.cookie,
                                              &egcf->session_name, &value);
@@ -160,34 +173,92 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   ngx_conf_merge_value(conf->enable, prev->enable, 0);
   ngx_conf_merge_str_value(conf->session_name, prev->session_name, "endgame");
   ngx_conf_merge_sec_value(conf->session_ttl, prev->session_ttl, 60 * 60);
+  ngx_conf_merge_str_value(conf->session_domain, prev->session_domain, "");
   ngx_conf_merge_str_value(conf->header_prefix, prev->header_prefix, "X-User-");
+
+  if (!conf->session_secret_set) {
+    if (prev->session_secret_set) {
+      conf->session_secret = prev->session_secret;
+      conf->session_secret_set = 1;
+    } else if (conf->enable) {
+      return "missing endame_session_secret";
+    }
+  }
 
   return NGX_CONF_OK;
 }
 
-static char *ngx_http_endgame_set_session_name(ngx_conf_t *cf, void *post,
-                                               void *data) {
-  ngx_str_t *str = data;
+static char *ngx_http_endgame_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
+                                      void *conf) {
+  ngx_str_t *field = (ngx_str_t *)((char *)conf + cmd->offset);
 
-  if (str->data == NULL || str->len == 0) {
-    ngx_log_error(NGX_LOG_NOTICE, cf->log, 0,
-                  "endgame_session_name cannot be empty");
-    return NGX_CONF_ERROR;
+  if (field->data) {
+    return "is duplicate";
+  }
+
+  ngx_str_t *arg = cf->args->elts;
+  arg += 1;
+
+  if (arg->data == NULL || arg->len == 0) {
+    return "is empty";
   }
 
   CSlice trimmed =
-      endgame_c_slice_trim((CSlice){.ptr = str->data, .len = str->len});
+      endgame_c_slice_trim((CSlice){.ptr = arg->data, .len = arg->len});
 
-  if (trimmed.len == 0) {
-    ngx_log_error(NGX_LOG_NOTICE, cf->log, 0,
-                  "endgame_session_name cannot be white spaces");
-    return NGX_CONF_ERROR;
+  *field = (ngx_str_t){.data = (uint8_t *)trimmed.ptr, .len = trimmed.len};
+
+  return NGX_CONF_OK;
+}
+
+static char *ngx_http_endgame_set_nonempty_str(ngx_conf_t *cf,
+                                               ngx_command_t *cmd, void *conf) {
+  char *out = ngx_http_endgame_set_str(cf, cmd, conf);
+  if (out) {
+    return out;
   }
 
-  str->data = (uint8_t *)trimmed.ptr;
-  str->len = trimmed.len;
+  ngx_str_t *field = (ngx_str_t *)((char *)conf + cmd->offset);
 
-  ngx_log_error(NGX_LOG_NOTICE, cf->log, 0, "endgame_session_name '%V'", str);
+  if (field->len == 0) {
+    return "is just whitespaces";
+  }
+
+  return NGX_CONF_OK;
+}
+
+static char *ngx_http_endgame_set_session_secret(ngx_conf_t *cf,
+                                                 ngx_command_t *cmd,
+                                                 void *conf) {
+  ngx_http_endgame_conf_t *egcf = conf;
+
+  if (egcf->session_secret_set) {
+    return "is duplicate";
+  }
+
+  ngx_str_t *arg = cf->args->elts;
+  ngx_str_t *kind = arg + 1;
+  ngx_str_t *value = arg + 2;
+
+  if (ngx_strncasecmp((uint8_t *)"raw", kind->data, kind->len) == 0) {
+    if (value->len != 44 || value->data[43] != '=' || value->data[42] == '=') {
+      return "is not a 32byte secret";
+    }
+
+    ngx_str_t decoded = {.data = egcf->session_secret.bytes};
+    if (ngx_decode_base64(&decoded, value) == NGX_ERROR) {
+      return "is not valid base64";
+    }
+
+    if (decoded.len != 32) {
+      return "is not a decoded 32byte secret";
+    }
+
+    egcf->session_secret_set = 1;
+  } else {
+    ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "unexpected value '%V'", kind);
+    return "should be 'raw' or 'file'";
+  }
 
   return NGX_CONF_OK;
 }

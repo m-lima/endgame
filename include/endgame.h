@@ -3,30 +3,22 @@
 #include <stdint.h>
 #define endgame_c_slice(str) (CSlice){.ptr = (const uint8_t *)str, .len = sizeof(str) - 1}
 
+typedef struct CSlice {
+  const uint8_t *ptr;
+  uintptr_t len;
+} CSlice;
+
 typedef struct RustSlice {
   const uint8_t *ptr;
   uintptr_t len;
   uintptr_t cap;
 } RustSlice;
 
-typedef struct RustSlice RustError;
-
-typedef struct KeyBase64 {
-  uint8_t bytes[176];
-} KeyBase64;
+typedef struct CSlice Error;
 
 typedef struct Key {
   uint8_t bytes[32];
 } Key;
-
-typedef struct CSlice {
-  const uint8_t *ptr;
-  uintptr_t len;
-} CSlice;
-
-typedef struct CSlice Error;
-
-RustError endgame_base64_into_key(struct KeyBase64 self, struct Key *dst);
 
 struct CSlice endgame_c_slice_trim(struct CSlice self);
 

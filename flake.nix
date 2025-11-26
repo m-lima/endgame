@@ -88,9 +88,12 @@
 
                   server {
                     endgame on;
+                    endgame_session_secret raw MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=;
+
                     listen 0.0.0.0:80 default_server;
                     listen [::0]:80 default_server;
                     server_name localhost;
+
                     location /on {
                       endgame on;
                     }
