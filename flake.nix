@@ -43,8 +43,8 @@
           modules = [ module ];
         };
         nginx-src = pkgs.stdenvNoCC.mkDerivation {
-          name = "${pkgs.nginx.name}-src";
-          inherit (pkgs.nginx) version src;
+          name = "${nginx.name}-src";
+          inherit (nginx) version src;
 
           dontConfigure = true;
           dontBuild = true;
@@ -58,8 +58,8 @@
             touch "$out/ngx_auto_headers.h"
           '';
         };
-        docker = pkgs.dockerTools.buildImage {
-          name = "${pkgs.nginx.pname}-${rust.packages.default.pname}";
+        nginx-docker = pkgs.dockerTools.buildImage {
+          name = "${nginx.pname}-${rust.packages.default.pname}";
           tag = rust.packages.default.version;
           copyToRoot = [ nginx ];
           runAsRoot = ''
@@ -87,11 +87,21 @@
                   access_log syslog:server=unix:/dev/log main;
 
                   server {
+                    endgame on;
                     listen 0.0.0.0:80 default_server;
                     listen [::0]:80 default_server;
                     server_name localhost;
+                    location /on {
+                      endgame on;
+                    }
+                    location /off {
+                      endgame off;
+                    }
+                    location /diff {
+                      endgame on;
+                      endgame_session_name diff;
+                    }
                     location / {
-                      return 200;
                     }
                   }
                 }
@@ -110,7 +120,7 @@
               pkgs: [
                 pkgs.podman
                 (pkgs.writeShellScriptBin "podman-build-nix" "podman build --signature-policy ${policy} $@")
-                (pkgs.writeShellScriptBin "podman-load-nix" "podman load --signature-policy ${policy} < ${docker}")
+                (pkgs.writeShellScriptBin "podman-load-nix" "podman load --signature-policy ${policy} $@")
               ];
             overrides.commonArgs.C_INCLUDE_PATH = "${nginx-src}:${./include}";
           }).outputs;
@@ -118,7 +128,7 @@
       rust
       // {
         packages = rust.packages // {
-          inherit nginx nginx-src docker;
+          inherit nginx nginx-src nginx-docker;
         };
       }
     );
