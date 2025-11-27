@@ -1,7 +1,7 @@
 use crate::ffi::{CSlice, Error, RustSlice};
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Key {
     pub bytes: [u8; 32],
 }
@@ -162,4 +162,40 @@ pub extern "C" fn endgame_decrypt(
     }
 
     Error::default()
+}
+
+#[must_use]
+#[unsafe(no_mangle)]
+pub extern "C" fn endgame_load_key(path: CSlice, key: &mut Key) -> Error {
+    let Some(path) = path.as_option() else {
+        return Error::new("Path is null");
+    };
+
+    let Ok(path) = str::from_utf8(path) else {
+        return Error::new("Path is not valid UTF-8");
+    };
+
+    let path = std::path::PathBuf::from(path);
+    if !path.exists() {
+        return Error::new("Path does not exist");
+    }
+
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return Error::new("Could not open path");
+    };
+
+    let mut bytes = 0;
+    while bytes < key.bytes.len() {
+        match std::io::Read::read(&mut file, &mut key.bytes[bytes..]) {
+            Ok(0) => return Error::new("Key is not large enough. Need 32 bytes"),
+            Err(_) => return Error::new("Could not read file"),
+            Ok(b) => bytes += b,
+        }
+    }
+
+    match std::io::Read::read(&mut file, &mut [0; 1]) {
+        Ok(0) => Error::default(),
+        Ok(_) => Error::new("Key is too large. Need 32 bytes"),
+        Err(_) => Error::new("Could not read file"),
+    }
 }

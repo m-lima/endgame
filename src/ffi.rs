@@ -16,7 +16,7 @@ pub struct RustSlice {
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default)]
-pub struct Error(pub CSlice);
+pub struct Error(CSlice);
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default)]

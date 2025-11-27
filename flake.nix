@@ -61,7 +61,6 @@
         nginx-docker = pkgs.dockerTools.buildImage {
           name = "${nginx.pname}-${rust.packages.default.pname}";
           tag = rust.packages.default.version;
-          copyToRoot = [ nginx ];
           runAsRoot = ''
             #!${pkgs.runtimeShell}
             mkdir -p /etc
@@ -70,11 +69,11 @@
           '';
           config = {
             Cmd = [
-              "nginx"
+              "${nginx}/bin/nginx"
               "-e"
               "/dev/stderr"
               "-c"
-              "${pkgs.writeText "conf/nginx.conf" ''
+              "${pkgs.writeText "nginx.conf" ''
                 daemon off;
                 pid /tmp/endgame.pid;
 
@@ -96,6 +95,7 @@
 
                     location /on {
                       endgame on;
+                      endgame_session_key file ${./mock_key};
                     }
                     location /off {
                       endgame off;

@@ -16,15 +16,14 @@ static char *ngx_http_endgame_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
                                       void *conf);
 static char *ngx_http_endgame_set_nonempty_str(ngx_conf_t *cf,
                                                ngx_command_t *cmd, void *conf);
-static char *ngx_http_endgame_set_session_secret(ngx_conf_t *cf,
-                                                 ngx_command_t *cmd,
-                                                 void *conf);
+static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
+                                              ngx_command_t *cmd, void *conf);
 
 typedef struct {
   ngx_flag_t enable;
   ngx_str_t session_name;
-  Key session_secret;
-  ngx_flag_t session_secret_set;
+  Key session_key;
+  ngx_flag_t session_key_set;
   time_t session_ttl;
   ngx_str_t session_domain;
   ngx_str_t header_prefix;
@@ -40,11 +39,11 @@ static ngx_command_t ngx_http_endgame_commands[] = {
          NGX_CONF_TAKE1,
      ngx_http_endgame_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, session_name), NULL},
-    {ngx_string("endgame_session_secret"),
+    {ngx_string("endgame_session_key"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE2,
-     ngx_http_endgame_set_session_secret, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_endgame_conf_t, session_secret), NULL},
+     ngx_http_endgame_set_session_key, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, session_key), NULL},
     {ngx_string("endgame_session_ttl"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
@@ -117,8 +116,8 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
   }
 
   ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "endgaaaaayyme %d %d %d %d",
-                egcf->session_secret.bytes[0], egcf->session_secret.bytes[1],
-                egcf->session_secret.bytes[2], egcf->session_secret.bytes[3]);
+                egcf->session_key.bytes[0], egcf->session_key.bytes[1],
+                egcf->session_key.bytes[2], egcf->session_key.bytes[3]);
 
   cookie = ngx_http_parse_multi_header_lines(r, r->headers_in.cookie,
                                              &egcf->session_name, &value);
@@ -132,14 +131,11 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
             given = endgame_rust_slice_null(),
             family = endgame_rust_slice_null();
 
-  ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "cookie: '%*s'", src.len,
-                src.ptr);
-  CSlice error = endgame_decrypt(&egcf->session_secret, src, egcf->session_ttl,
+  CSlice error = endgame_decrypt(&egcf->session_key, src, egcf->session_ttl,
                                  &email, &given, &family);
   if (error.ptr != NULL) {
-    ngx_str_t msg = {.data = (u_char *)error.ptr, .len = error.len};
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to decrypt cookie: \"%V\"", &msg);
+                  "failed to decrypt cookie: '%*s'", error.len, error.ptr);
     return NGX_HTTP_UNAUTHORIZED;
   }
 
@@ -176,12 +172,12 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   ngx_conf_merge_str_value(conf->session_domain, prev->session_domain, "");
   ngx_conf_merge_str_value(conf->header_prefix, prev->header_prefix, "X-User-");
 
-  if (!conf->session_secret_set) {
-    if (prev->session_secret_set) {
-      conf->session_secret = prev->session_secret;
-      conf->session_secret_set = 1;
+  if (!conf->session_key_set) {
+    if (prev->session_key_set) {
+      conf->session_key = prev->session_key;
+      conf->session_key_set = 1;
     } else if (conf->enable) {
-      return "missing endame_session_secret";
+      return "missing endame_session_key";
     }
   }
 
@@ -227,12 +223,11 @@ static char *ngx_http_endgame_set_nonempty_str(ngx_conf_t *cf,
   return NGX_CONF_OK;
 }
 
-static char *ngx_http_endgame_set_session_secret(ngx_conf_t *cf,
-                                                 ngx_command_t *cmd,
-                                                 void *conf) {
+static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
+                                              ngx_command_t *cmd, void *conf) {
   ngx_http_endgame_conf_t *egcf = conf;
 
-  if (egcf->session_secret_set) {
+  if (egcf->session_key_set) {
     return "is duplicate";
   }
 
@@ -242,23 +237,33 @@ static char *ngx_http_endgame_set_session_secret(ngx_conf_t *cf,
 
   if (ngx_strncasecmp((uint8_t *)"raw", kind->data, kind->len) == 0) {
     if (value->len != 44 || value->data[43] != '=' || value->data[42] == '=') {
-      return "is not a 32byte secret";
+      return "is not a 32-byte key";
     }
 
-    ngx_str_t decoded = {.data = egcf->session_secret.bytes};
+    ngx_str_t decoded = {.data = egcf->session_key.bytes};
     if (ngx_decode_base64(&decoded, value) == NGX_ERROR) {
       return "is not valid base64";
     }
 
     if (decoded.len != 32) {
-      return "is not a decoded 32byte secret";
+      return "is not a decoded 32-byte key";
     }
 
-    egcf->session_secret_set = 1;
+    egcf->session_key_set = 1;
+  } else if (ngx_strncasecmp((uint8_t *)"file", kind->data, kind->len) == 0) {
+    CSlice error = endgame_load_key(
+        (CSlice){.ptr = value->data, .len = value->len}, &egcf->session_key);
+    if (error.ptr != NULL) {
+      ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to load key: '%*s'",
+                    error.len, error.ptr);
+      return "does not point to a valid key";
+    }
+
   } else {
-    ngx_log_error(NGX_LOG_EMERG, cf->log, 0, "unexpected value '%V'", kind);
+    ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", kind);
     return "should be 'raw' or 'file'";
   }
 
+  egcf->session_key_set = 1;
   return NGX_CONF_OK;
 }

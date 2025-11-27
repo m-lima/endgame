@@ -40,3 +40,5 @@ Error endgame_decrypt(const struct Key *key,
                       struct RustSlice *email,
                       struct RustSlice *given_name,
                       struct RustSlice *family_name);
+
+Error endgame_load_key(struct CSlice path, struct Key *key);
