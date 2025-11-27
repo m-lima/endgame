@@ -1,4 +1,0 @@
-ngx_addon_name=endgame
-ngx_cargo_manifest=$ngx_addon_dir/Cargo.toml
-
-ngx_rust_make_modules
