@@ -102,7 +102,6 @@ static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf) {
 }
 
 static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
-  ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "endgaaaaayyme");
 
   ngx_table_elt_t *cookie;
   ngx_str_t value;
@@ -111,13 +110,8 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
       ngx_http_get_module_loc_conf(r, ngx_http_endgame_module);
 
   if (!egcf->enable) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "declined");
     return NGX_DECLINED;
   }
-
-  ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "endgaaaaayyme %d %d %d %d",
-                egcf->session_key.bytes[0], egcf->session_key.bytes[1],
-                egcf->session_key.bytes[2], egcf->session_key.bytes[3]);
 
   cookie = ngx_http_parse_multi_header_lines(r, r->headers_in.cookie,
                                              &egcf->session_name, &value);
@@ -126,16 +120,15 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     return NGX_HTTP_UNAUTHORIZED;
   }
 
-  CSlice src = {.ptr = value.data, .len = value.len};
   RustSlice email = endgame_rust_slice_null(),
             given = endgame_rust_slice_null(),
             family = endgame_rust_slice_null();
 
-  CSlice error = endgame_decrypt(&egcf->session_key, src, egcf->session_ttl,
-                                 &email, &given, &family);
-  if (error.ptr != NULL) {
+  Error error = endgame_decrypt(&egcf->session_key, value, egcf->session_ttl,
+                                &email, &given, &family);
+  if (error.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to decrypt cookie: '%*s'", error.len, error.ptr);
+                  "failed to decrypt cookie: '%V'", &error);
     return NGX_HTTP_UNAUTHORIZED;
   }
 
@@ -174,7 +167,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
 
   if (!conf->session_key_set) {
     if (prev->session_key_set) {
-      conf->session_key = prev->session_key;
+      ngx_memcpy(&conf->session_key, &prev->session_key, sizeof(Key));
       conf->session_key_set = 1;
     } else if (conf->enable) {
       return "missing endame_session_key";
@@ -199,10 +192,9 @@ static char *ngx_http_endgame_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
     return "is empty";
   }
 
-  CSlice trimmed =
-      endgame_c_slice_trim((CSlice){.ptr = arg->data, .len = arg->len});
+  endgame_ngx_str_t_trim(arg);
 
-  *field = (ngx_str_t){.data = (uint8_t *)trimmed.ptr, .len = trimmed.len};
+  *field = *arg;
 
   return NGX_CONF_OK;
 }
@@ -240,7 +232,10 @@ static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
       return "is not a 32-byte key";
     }
 
-    ngx_str_t decoded = {.data = egcf->session_key.bytes};
+    ngx_str_t decoded = {.data = egcf->session_key};
+    // Using the actual destination for decrypting
+    // Here we know that it should fit, and we leave the decoding to set the
+    // `len` field
     if (ngx_decode_base64(&decoded, value) == NGX_ERROR) {
       return "is not valid base64";
     }
@@ -251,11 +246,10 @@ static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
 
     egcf->session_key_set = 1;
   } else if (ngx_strncasecmp((uint8_t *)"file", kind->data, kind->len) == 0) {
-    CSlice error = endgame_load_key(
-        (CSlice){.ptr = value->data, .len = value->len}, &egcf->session_key);
-    if (error.ptr != NULL) {
-      ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to load key: '%*s'",
-                    error.len, error.ptr);
+    Error error = endgame_load_key(*value, &egcf->session_key);
+    if (error.data != NULL) {
+      ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to load key: '%V'",
+                    &error);
       return "does not point to a valid key";
     }
 

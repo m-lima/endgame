@@ -87,7 +87,7 @@
 
                   server {
                     endgame on;
-                    endgame_session_secret raw MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=;
+                    endgame_session_key raw MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=;
 
                     listen 0.0.0.0:80 default_server;
                     listen [::0]:80 default_server;
@@ -95,7 +95,7 @@
 
                     location /on {
                       endgame on;
-                      endgame_session_key file ${./mock_key};
+                      endgame_session_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
                     }
                     location /off {
                       endgame off;

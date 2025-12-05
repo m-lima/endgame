@@ -8,4 +8,5 @@ crate-type = ["staticlib"]
 
 [dependencies]
 base64 = { version = "0.22.1" }
-chacha20poly1305 = "0.10.1"
+# TODO: Use from crates
+crypter = { git = "https://github.com/m-lima/crypter", branch = "master" }

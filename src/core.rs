@@ -1,6 +1,6 @@
 use chacha20poly1305::{self as chacha, XChaCha20Poly1305 as Cipher};
 
-pub fn encrypt<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
+pub fn encrypt_raw<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
     key: K,
     payload: P,
 ) -> Result<Vec<u8>, Error> {
@@ -16,7 +16,7 @@ pub fn encrypt<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
         .map_err(Error::Encryption)
 }
 
-pub fn decrypt<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
+pub fn decrypt_raw<'k, 'p, K: Into<&'k chacha::Key>, P: Into<&'p [u8]>>(
     key: K,
     payload: P,
 ) -> Result<Vec<u8>, Error> {
@@ -48,6 +48,9 @@ pub enum Error {
     Decryption(chacha::Error),
     Decoding(base64::DecodeError),
     Nonce,
+    Timestamp,
+    PayloadTooShort,
+    InvalidUtf8(std::string::FromUtf8Error),
 }
 
 impl Error {
@@ -57,6 +60,9 @@ impl Error {
             Self::Decryption(_) => "Failed to decrypt",
             Self::Decoding(_) => "Failed to decode",
             Self::Nonce => "Payload not large enough to contain the 24-byte nonce",
+            Self::Timestamp => "Could not generate timestamp",
+            Self::PayloadTooShort => "Payload was too short",
+            Self::InvalidUtf8(_) => "Invalid UTF-8 in payload",
         }
     }
 }
@@ -69,6 +75,45 @@ impl std::fmt::Display for Error {
             Self::Encryption(error) | Self::Decryption(error) => error.fmt(f),
             Self::Decoding(error) => error.fmt(f),
             Self::Nonce => f.write_str(Self::Nonce.as_str()),
+            Self::Timestamp => f.write_str(Self::Timestamp.as_str()),
+            Self::PayloadTooShort => f.write_str(Self::Timestamp.as_str()),
+            Self::InvalidUtf8(error) => error.fmt(f),
         }
+    }
+}
+
+trait Serialize {
+    fn size(&self) -> usize;
+    fn write(&self, buffer: &mut Vec<u8>);
+}
+
+impl Serialize for u64 {
+    fn size(&self) -> usize {
+        size_of::<Self>()
+    }
+
+    fn write(&self, buffer: &mut Vec<u8>) {
+        buffer.extend_from_slice(&self.to_ne_bytes());
+    }
+}
+
+impl Serialize for &[u8] {
+    fn size(&self) -> usize {
+        size_of::<usize>() + self.len()
+    }
+
+    fn write(&self, buffer: &mut Vec<u8>) {
+        buffer.extend_from_slice(&self.len().to_ne_bytes());
+        buffer.extend_from_slice(self);
+    }
+}
+
+impl Serialize for Option<&[u8]> {
+    fn size(&self) -> usize {
+        size_of::<usize>()
+    }
+
+    fn write(&self, buffer: &mut Vec<u8>) {
+        buffer.extend_from_slice(&0_usize.to_ne_bytes());
     }
 }
