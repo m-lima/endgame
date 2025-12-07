@@ -21,6 +21,7 @@ static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
 
 typedef struct {
   ngx_flag_t enable;
+  ngx_flag_t auto_login;
   ngx_str_t session_name;
   Key session_key;
   ngx_flag_t session_key_set;
@@ -34,6 +35,10 @@ static ngx_command_t ngx_http_endgame_commands[] = {
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, enable), NULL},
+    {ngx_string("endgame_auto_login"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
+     ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, auto_login), NULL},
     {ngx_string("endgame_session_name"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
@@ -117,7 +122,7 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
                                              &egcf->session_name, &value);
 
   if (cookie == NULL || value.len == 0) {
-    return NGX_HTTP_UNAUTHORIZED;
+    goto handler_unauth;
   }
 
   RustSlice email = endgame_rust_slice_null(),
@@ -129,16 +134,31 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
   if (error.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error);
-    return NGX_HTTP_UNAUTHORIZED;
+    goto handler_unauth;
   }
 
   if (email.ptr == NULL) {
     endgame_rust_slice_free(&given);
     endgame_rust_slice_free(&family);
-    return NGX_HTTP_UNAUTHORIZED;
+    goto handler_unauth;
   }
 
   return NGX_DECLINED;
+
+handler_unauth:
+  if (egcf->auto_login) {
+    ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
+    if (loc == NULL) {
+      return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    loc->hash = 1;
+    ngx_str_set(&loc->key, "Location");
+    ngx_str_set(&loc->value, "https://example.org/");
+    return NGX_HTTP_MOVED_TEMPORARILY;
+  }
+
+  return NGX_HTTP_UNAUTHORIZED;
 }
 
 static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
@@ -150,6 +170,7 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
   }
 
   conf->enable = NGX_CONF_UNSET;
+  conf->auto_login = NGX_CONF_UNSET;
   conf->session_ttl = NGX_CONF_UNSET;
 
   return conf;
@@ -161,6 +182,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   ngx_http_endgame_conf_t *conf = child;
 
   ngx_conf_merge_value(conf->enable, prev->enable, 0);
+  ngx_conf_merge_value(conf->auto_login, prev->auto_login, 0);
   ngx_conf_merge_str_value(conf->session_name, prev->session_name, "endgame");
   ngx_conf_merge_sec_value(conf->session_ttl, prev->session_ttl, 60 * 60);
   ngx_conf_merge_str_value(conf->session_domain, prev->session_domain, "");

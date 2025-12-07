@@ -95,6 +95,7 @@
 
                     location /on {
                       endgame on;
+                      endgame_auto_login on;
                       endgame_session_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
                     }
                     location /off {
