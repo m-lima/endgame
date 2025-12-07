@@ -150,6 +150,7 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
   }
 
   conf->enable = NGX_CONF_UNSET;
+  conf->session_ttl = NGX_CONF_UNSET;
 
   return conf;
 }
