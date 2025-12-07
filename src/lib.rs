@@ -17,19 +17,21 @@ mod ffi {
             pub data: *mut u8,
         }
 
-        #[repr(transparent)]
+        #[repr(C)]
         #[derive(Copy, Clone, Debug)]
-        pub struct Key(pub [u8; 32]);
+        pub struct Key {
+            pub bytes: [u8; 32],
+        }
 
         impl From<crypter::Key> for Key {
-            fn from(value: crypter::Key) -> Self {
-                Self(value)
+            fn from(bytes: crypter::Key) -> Self {
+                Self { bytes }
             }
         }
 
         impl From<Key> for crypter::Key {
             fn from(value: Key) -> Self {
-                value.0
+                value.bytes
             }
         }
 
@@ -133,7 +135,7 @@ mod ffi {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn endgame_decrypt(
-        key: &Key,
+        key: Key,
         src: ngx_str_t,
         max_age_secs: u64,
         email: &mut RustSlice,
@@ -160,7 +162,9 @@ mod ffi {
             return Error::new("Could not create timestamp in Unix epoch");
         };
 
-        if let Some(user) = dencrypt::decrypt(key.0, src).filter(|t| t.timestamp >= min_timestamp) {
+        if let Some(user) =
+            dencrypt::decrypt(key.bytes, src).filter(|t| t.timestamp >= min_timestamp)
+        {
             *email = user.email.into();
             *given_name = user.given_name.map_or(RustSlice::none(), RustSlice::from);
             *family_name = user.family_name.map_or(RustSlice::none(), RustSlice::from);
@@ -189,8 +193,8 @@ mod ffi {
         };
 
         let mut bytes = 0;
-        while bytes < key.0.len() {
-            match std::io::Read::read(&mut file, &mut key.0[bytes..]) {
+        while bytes < key.bytes.len() {
+            match std::io::Read::read(&mut file, &mut key.bytes[bytes..]) {
                 Ok(0) => return Error::new("Key is not large enough. Need 32 bytes"),
                 Err(_) => return Error::new("Could not read file"),
                 Ok(b) => bytes += b,

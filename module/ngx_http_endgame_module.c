@@ -124,7 +124,7 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
             given = endgame_rust_slice_null(),
             family = endgame_rust_slice_null();
 
-  Error error = endgame_decrypt(&egcf->session_key, value, egcf->session_ttl,
+  Error error = endgame_decrypt(egcf->session_key, value, egcf->session_ttl,
                                 &email, &given, &family);
   if (error.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -168,7 +168,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
 
   if (!conf->session_key_set) {
     if (prev->session_key_set) {
-      ngx_memcpy(&conf->session_key, &prev->session_key, sizeof(Key));
+      conf->session_key = prev->session_key;
       conf->session_key_set = 1;
     } else if (conf->enable) {
       return "missing endame_session_key";
@@ -233,7 +233,7 @@ static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
       return "is not a 32-byte key";
     }
 
-    ngx_str_t decoded = {.data = egcf->session_key};
+    ngx_str_t decoded = {.data = egcf->session_key.bytes};
     // Using the actual destination for decrypting
     // Here we know that it should fit, and we leave the decoding to set the
     // `len` field
