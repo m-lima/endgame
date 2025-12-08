@@ -1,11 +1,5 @@
 #![warn(clippy::pedantic)]
 
-// pub mod core;
-// pub mod nginx;
-//
-// pub(crate) mod ffi;
-// pub(crate) mod types;
-
 mod ffi {
     mod types {
         // allow(non_camel_case_types): to match the nginx type
