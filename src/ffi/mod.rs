@@ -1,6 +1,6 @@
 mod types;
 
-use crate::dencrypt;
+use crate::{dencrypt, oidc};
 use types::{Error, Key, RustSlice, ngx_str_t};
 
 #[unsafe(no_mangle)]
@@ -74,5 +74,50 @@ pub extern "C" fn endgame_load_key(path: ngx_str_t, key: &mut Key) -> Error {
         Ok(0) => Error::none(),
         Ok(_) => Error::new("Key is too large. Need 32 bytes"),
         Err(_) => Error::new("Could not read file"),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn endgame_oidc_discover(
+    issuer: ngx_str_t,
+    client_id: ngx_str_t,
+    client_secret: ngx_str_t,
+    redirect_url: ngx_str_t,
+) -> Error {
+    macro_rules! as_str {
+        ($value: ident) => {{
+            let Some(value) = $value.as_option() else {
+                return Error::new(concat!("Parameter `", stringify!($value), "` is null"));
+            };
+            let Ok(value) = str::from_utf8(value) else {
+                return Error::new(concat!(
+                    "Parameter `",
+                    stringify!($value),
+                    "` is not valid UTF-8"
+                ));
+            };
+            value.trim()
+        }};
+        (url $value: ident) => {{
+            let Ok(value) = openidconnect::url::Url::parse(as_str!($value)) else {
+                return Error::new(concat!(
+                    "Parameter `",
+                    stringify!($value),
+                    "` is not a valid URL"
+                ));
+            };
+            value
+        }};
+    }
+
+    let issuer = as_str!(url issuer);
+    let client_id = as_str!(client_id);
+    let client_secret = as_str!(client_secret);
+    let redirect_url = as_str!(url redirect_url);
+
+    if oidc::discover(issuer, client_id, client_secret, redirect_url).is_none() {
+        Error::new("Could not discover OIDC configuration")
+    } else {
+        Error::none()
     }
 }
