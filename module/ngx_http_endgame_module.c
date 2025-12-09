@@ -24,6 +24,8 @@ static char *ngx_http_endgame_set_session_key(ngx_conf_t *cf,
 
 static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
                                          ngx_http_endgame_conf_t *egcf);
+static ngx_table_elt_t *endgame_find_header(ngx_list_part_t *part,
+                                            ngx_str_t name);
 static ngx_int_t endgame_login_control_header_matches(
     ngx_http_request_t *r, ngx_http_endgame_conf_t *egcf, ngx_str_t value);
 static ngx_int_t endgame_redirect_login(ngx_http_request_t *r,
@@ -183,11 +185,20 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
 static ngx_int_t endgame_set_header(ngx_http_request_t *r,
                                     ngx_str_t header_name,
                                     RustSlice header_value) {
+  // Disable the header first thing
+  ngx_table_elt_t *header =
+      endgame_find_header(&r->headers_in.headers.part, header_name);
+  if (header != NULL) {
+    header->hash = 0;
+  }
+
+  // If the incoming value is null, stop here
   if (header_value.ptr == NULL || header_value.len == 0) {
     endgame_rust_slice_free(&header_value);
     return NGX_OK;
   }
 
+  // Copy the rust string into a ngx_str_t
   ngx_str_t header_value_str = {.data = ngx_pnalloc(r->pool, header_value.len),
                                 .len = header_value.len};
   if (header_value_str.data == NULL) {
@@ -199,7 +210,14 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
   ngx_memcpy(header_value_str.data, header_value.ptr, header_value.len);
   endgame_rust_slice_free(&header_value);
 
-  ngx_table_elt_t *header = ngx_list_push(&r->headers_out.headers);
+  // If the header already existed, copy the value in, enable, and stop here
+  if (header != NULL) {
+    header->hash = 1;
+    header->value = header_value_str;
+    return NGX_OK;
+  }
+
+  header = ngx_list_push(&r->headers_in.headers);
   if (header == NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "Could not allocate `%V` header", &header_name);
@@ -231,9 +249,9 @@ static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
   return NGX_HTTP_UNAUTHORIZED;
 }
 
-static ngx_int_t endgame_login_control_header_matches(
-    ngx_http_request_t *r, ngx_http_endgame_conf_t *egcf, ngx_str_t value) {
-  ngx_list_part_t *part = &r->headers_in.headers.part;
+static ngx_table_elt_t *endgame_find_header(ngx_list_part_t *part,
+                                            ngx_str_t name) {
+
   ngx_table_elt_t *h = part->elts;
 
   for (ngx_uint_t i = 0;; i++) {
@@ -248,17 +266,24 @@ static ngx_int_t endgame_login_control_header_matches(
     }
 
     ngx_str_t key = h[i].key;
-
-    if (key.data != NULL && key.len == egcf->login_control_header.len &&
-        ngx_strncasecmp(key.data, egcf->login_control_header.data, key.len) ==
-            0) {
-      ngx_str_t control_header = h[i].value;
-      return control_header.data != NULL && control_header.len == value.len &&
-             (ngx_strncasecmp(control_header.data, value.data, value.len) == 0);
+    if (key.data != NULL && key.len == name.len &&
+        ngx_strncasecmp(key.data, name.data, key.len) == 0) {
+      return &h[i];
     }
   }
 
-  return 0;
+  return NULL;
+}
+
+static ngx_int_t endgame_login_control_header_matches(
+    ngx_http_request_t *r, ngx_http_endgame_conf_t *egcf, ngx_str_t value) {
+  ngx_table_elt_t *maybe_header = endgame_find_header(
+      &r->headers_in.headers.part, egcf->login_control_header);
+
+  return maybe_header != NULL && maybe_header->value.data != NULL &&
+         maybe_header->value.len == value.len &&
+         (ngx_strncasecmp(maybe_header->value.data, value.data, value.len) ==
+          0);
 }
 
 static ngx_int_t endgame_redirect_login(ngx_http_request_t *r,
