@@ -10,3 +10,4 @@ crate-type = ["staticlib", "rlib"]
 base64 = { version = "0.22.1" }
 # TODO: Use from crates
 crypter = { git = "https://github.com/m-lima/crypter", branch = "master" }
+openidconnect = { version = "4.0.1", features = ["reqwest-blocking"] }
