@@ -1,58 +1,56 @@
 mod types;
 
-use crate::{dencrypt, oidc};
+use crate::{
+    dencrypt, oidc,
+    types::{Timestamp, Token},
+};
 use types::{Error, Key, RustSlice, ngx_str_t};
 
-#[unsafe(no_mangle)]
-pub extern "C" fn endgame_decrypt(
-    key: Key,
-    src: ngx_str_t,
-    max_age_secs: u64,
-    email: &mut RustSlice,
-    given_name: &mut RustSlice,
-    family_name: &mut RustSlice,
-) -> Error {
-    if !email.ptr.is_null() {
-        return Error::new("Email is not null");
-    }
-
-    if !given_name.ptr.is_null() {
-        return Error::new("Given name is not null");
-    }
-
-    if !family_name.ptr.is_null() {
-        return Error::new("Family name is not null");
-    }
-
-    let Some(src) = src.as_option() else {
-        return Error::new("Source is null");
+macro_rules! attempt {
+    ($value: expr, $name: expr, $problem: literal) => {
+        match $value {
+            Some(value) => value,
+            None => return Error::new(concat!("Parameter `", $name, "` is ", $problem)),
+        }
     };
+}
 
-    let Some(min_timestamp) = dencrypt::age_to_unix_epoch(max_age_secs) else {
-        return Error::new("Could not create timestamp in Unix epoch");
+macro_rules! as_str {
+    ($value: ident) => {{
+        let value = attempt!($value.as_option(), stringify!($value), "null");
+        let value = attempt!(
+            str::from_utf8(value).ok(),
+            stringify!($value),
+            "not valid UTF-8"
+        );
+        let value = value.trim();
+        attempt!(
+            (!value.is_empty()).then_some(value),
+            stringify!($value),
+            "empty"
+        )
+    }};
+}
+
+macro_rules! as_string {
+    ($value: ident) => {
+        String::from(as_str!($value))
     };
+}
 
-    if let Some(token) = dencrypt::decrypt(key.bytes, src).filter(|t| t.timestamp >= min_timestamp)
-    {
-        *email = token.email.into();
-        *given_name = token.given_name.map_or(RustSlice::none(), RustSlice::from);
-        *family_name = token.family_name.map_or(RustSlice::none(), RustSlice::from);
-    }
-
-    Error::none()
+macro_rules! check_null {
+    ($value: ident) => {
+        attempt!($value.ptr.is_null().then_some(()), stringify!($value), "null");
+    };
+    ($value: ident $($rest: ident) *) => {{
+        check_null!($value);
+        check_null!($($rest) *);
+    }};
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn endgame_load_key(path: ngx_str_t, key: &mut Key) -> Error {
-    let Some(path) = path.as_option() else {
-        return Error::new("Path is null");
-    };
-
-    let Ok(path) = str::from_utf8(path) else {
-        return Error::new("Path is not valid UTF-8");
-    };
-
-    let path = std::path::PathBuf::from(path);
+    let path = std::path::PathBuf::from(as_str!(path));
     if !path.exists() {
         return Error::new("Path does not exist");
     }
@@ -78,46 +76,84 @@ pub extern "C" fn endgame_load_key(path: ngx_str_t, key: &mut Key) -> Error {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn endgame_oidc_discover(
-    issuer: ngx_str_t,
-    client_id: ngx_str_t,
-    client_secret: ngx_str_t,
-    redirect_url: ngx_str_t,
+pub extern "C" fn endgame_token_decrypt(
+    key: Key,
+    src: ngx_str_t,
+    max_age_secs: u64,
+    email: &mut RustSlice,
+    given_name: &mut RustSlice,
+    family_name: &mut RustSlice,
 ) -> Error {
-    macro_rules! as_str {
-        ($value: ident) => {{
-            let Some(value) = $value.as_option() else {
-                return Error::new(concat!("Parameter `", stringify!($value), "` is null"));
-            };
-            let Ok(value) = str::from_utf8(value) else {
-                return Error::new(concat!(
-                    "Parameter `",
-                    stringify!($value),
-                    "` is not valid UTF-8"
-                ));
-            };
-            value.trim()
-        }};
-        (url $value: ident) => {{
-            let Ok(value) = openidconnect::url::Url::parse(as_str!($value)) else {
-                return Error::new(concat!(
-                    "Parameter `",
-                    stringify!($value),
-                    "` is not a valid URL"
-                ));
-            };
-            value
-        }};
+    check_null!(email given_name family_name);
+
+    let Some(src) = src.as_option() else {
+        return Error::new("Source is null");
+    };
+
+    let min_timestamp = Timestamp::now() - max_age_secs;
+
+    if let Some(token) =
+        dencrypt::decrypt::<Token>(key.bytes, src).filter(|t| t.timestamp >= min_timestamp)
+    {
+        *email = token.email.into();
+        *given_name = token.given_name.map_or(RustSlice::none(), RustSlice::from);
+        *family_name = token.family_name.map_or(RustSlice::none(), RustSlice::from);
     }
 
-    let issuer = as_str!(url issuer);
-    let client_id = as_str!(client_id);
-    let client_secret = as_str!(client_secret);
-    let redirect_url = as_str!(url redirect_url);
+    Error::none()
+}
 
-    if oidc::discover(issuer, client_id, client_secret, redirect_url).is_none() {
-        Error::new("Could not discover OIDC configuration")
-    } else {
-        Error::none()
+#[unsafe(no_mangle)]
+pub extern "C" fn endgame_oidc_discover(
+    discovery_url: ngx_str_t,
+    client_id: ngx_str_t,
+    client_secret: ngx_str_t,
+    callback_url: ngx_str_t,
+    oidc_id: &mut u64,
+) -> Error {
+    let discovery_url = attempt!(
+        openidconnect::IssuerUrl::new(as_string!(discovery_url)).ok(),
+        "discovery_url",
+        "not a valid URL"
+    );
+    let client_id = openidconnect::ClientId::new(as_string!(client_id));
+    let client_secret = openidconnect::ClientSecret::new(as_string!(client_secret));
+    let callback_url = attempt!(
+        openidconnect::RedirectUrl::new(as_string!(callback_url)).ok(),
+        "callback_url",
+        "not a valid URL"
+    );
+
+    match oidc::discover(&discovery_url, client_id, client_secret, callback_url) {
+        Some(id) => {
+            *oidc_id = id;
+            Error::none()
+        }
+        None => Error::new("Could not discover OIDC configuration"),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn endgame_oidc_get_url(
+    key: Key,
+    id: u64,
+    redirect_host: ngx_str_t,
+    redirect_uri: ngx_str_t,
+    auth_url: &mut RustSlice,
+) -> Error {
+    check_null!(auth_url);
+    let redirect_host = as_str!(redirect_host);
+    let redirect_uri = as_str!(redirect_uri);
+    let Ok(redirect_url) =
+        openidconnect::url::Url::parse(&format!("https://{redirect_host}{redirect_uri}"))
+    else {
+        return Error::new("The constructed redirect URL is not valid");
+    };
+    match oidc::get_auth_url(key.bytes, id, redirect_url) {
+        Some(url) => {
+            *auth_url = url.to_string().into();
+            Error::none()
+        }
+        None => Error::new("Failed to create authentication URL"),
     }
 }

@@ -11,7 +11,7 @@ fn help<O: std::io::Write>(mut output: O) {
     let _ = writeln!(output, "  -a --age     Age in seconds of the token");
 }
 
-fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame::dencrypt::Token) {
+fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame::types::Token) {
     macro_rules! error {
         ($msg: literal) => {
             error!($msg,)
@@ -94,12 +94,11 @@ fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame
         error!("Missing email");
     };
 
-    let timestamp = endgame::dencrypt::age_to_unix_epoch(timestamp.unwrap_or(0))
-        .expect("Failed to generate timestamp");
+    let timestamp = endgame::types::Timestamp::now() - timestamp.unwrap_or(0);
 
     (
         key,
-        endgame::dencrypt::Token {
+        endgame::types::Token {
             timestamp,
             email,
             given_name,

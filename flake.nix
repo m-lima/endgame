@@ -88,24 +88,35 @@
                   server {
                     endgame on;
                     endgame_session_key raw MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=;
+                    endgame_discovery_url https://accounts.google.com;
+                    endgame_client_id client;
+                    endgame_client_secret secret;
+                    endgame_callback_url http://localhost/callback;
 
                     listen 0.0.0.0:80 default_server;
                     listen [::0]:80 default_server;
                     server_name localhost;
+
+                    location / {
+                    }
 
                     location /on {
                       endgame on;
                       endgame_auto_login on;
                       endgame_session_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
                     }
+
                     location /off {
                       endgame off;
                     }
+
                     location /diff {
                       endgame on;
                       endgame_session_name diff;
                     }
-                    location / {
+
+                    location /callback {
+                      endgame off;
                     }
                   }
                 }

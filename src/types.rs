@@ -1,0 +1,146 @@
+use crate::io::{In, Out};
+
+#[derive(Copy, Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq)]
+pub struct Timestamp(u64);
+
+impl Timestamp {
+    #[must_use]
+    pub fn new(timestamp: u64) -> Self {
+        Self(timestamp)
+    }
+
+    /// Gets `now` as a timestamp
+    ///
+    /// # Panics
+    /// If `now` is before the birth of Unix
+    #[must_use]
+    pub fn now() -> Self {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| Timestamp(d.as_secs()))
+            .unwrap()
+    }
+
+    #[must_use]
+    pub fn secs(self) -> u64 {
+        self.0
+    }
+}
+
+impl std::ops::Sub<u64> for Timestamp {
+    type Output = Self;
+
+    fn sub(self, rhs: u64) -> Self::Output {
+        Self(self.0 - rhs)
+    }
+}
+
+impl std::ops::Add<u64> for Timestamp {
+    type Output = Self;
+
+    fn add(self, rhs: u64) -> Self::Output {
+        Self(self.0 + rhs)
+    }
+}
+
+impl Out for Timestamp {
+    fn size(&self) -> usize {
+        self.0.size()
+    }
+
+    fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.0.write(writer)
+    }
+}
+
+impl In for Timestamp {
+    fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        u64::read(reader).map(Self)
+    }
+}
+
+pub struct Token {
+    pub timestamp: Timestamp,
+    pub email: String,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
+}
+
+impl Out for Token {
+    fn size(&self) -> usize {
+        self.timestamp.size()
+            + self.email.size()
+            + self.given_name.as_deref().size()
+            + self.family_name.as_deref().size()
+    }
+
+    fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.timestamp.write(writer)?;
+        self.email.write(writer)?;
+        self.given_name.as_deref().write(writer)?;
+        self.family_name.as_deref().write(writer)
+    }
+}
+
+impl In for Token {
+    fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let timestamp = Timestamp::read(reader)?;
+        let email = Option::read(reader)?.ok_or(std::io::ErrorKind::InvalidData)?;
+        let given_name = Option::read(reader)?;
+        let family_name = Option::read(reader)?;
+
+        Ok(Self {
+            timestamp,
+            email,
+            given_name,
+            family_name,
+        })
+    }
+}
+
+pub struct State {
+    nonce: [u8; 32],
+    timestamp: Timestamp,
+    redirect: String,
+}
+
+impl State {
+    #[must_use]
+    pub fn new(nonce: [u8; 32], timestamp: Timestamp, redirect: String) -> Self {
+        Self {
+            nonce,
+            timestamp,
+            redirect,
+        }
+    }
+
+    #[must_use]
+    pub fn nonce(&self) -> &[u8; 32] {
+        &self.nonce
+    }
+}
+
+impl Out for State {
+    fn size(&self) -> usize {
+        self.nonce.size() + self.timestamp.size() + self.redirect.size()
+    }
+
+    fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.nonce.write(writer)?;
+        self.timestamp.write(writer)
+    }
+}
+
+impl In for State {
+    fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let nonce = <[u8; 32]>::read(reader)?;
+        let timestamp = Timestamp::read(reader)?;
+        let redirect = Option::read(reader)?.ok_or(std::io::ErrorKind::InvalidData)?;
+
+        Ok(Self {
+            nonce,
+            timestamp,
+            redirect,
+        })
+    }
+}
