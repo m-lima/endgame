@@ -1,9 +1,6 @@
 mod types;
 
-use crate::{
-    dencrypt, oidc,
-    types::{Timestamp, Token},
-};
+use crate::{oidc, token, types::Timestamp};
 use types::{Error, Key, RustSlice, ngx_str_t};
 
 macro_rules! attempt {
@@ -92,9 +89,7 @@ pub extern "C" fn endgame_token_decrypt(
 
     let min_timestamp = Timestamp::now() - max_age_secs;
 
-    if let Some(token) =
-        dencrypt::decrypt::<Token>(key.bytes, src).filter(|t| t.timestamp >= min_timestamp)
-    {
+    if let Some(token) = token::decrypt(key.bytes, src, min_timestamp) {
         *email = token.email.into();
         *given_name = token.given_name.map_or(RustSlice::none(), RustSlice::from);
         *family_name = token.family_name.map_or(RustSlice::none(), RustSlice::from);
@@ -144,12 +139,12 @@ pub extern "C" fn endgame_oidc_get_url(
     check_null!(auth_url);
     let redirect_host = as_str!(redirect_host);
     let redirect_uri = as_str!(redirect_uri);
-    let Ok(redirect_url) =
+    let Ok(redirect) =
         openidconnect::url::Url::parse(&format!("https://{redirect_host}{redirect_uri}"))
     else {
         return Error::new("The constructed redirect URL is not valid");
     };
-    match oidc::get_auth_url(key.bytes, id, redirect_url) {
+    match oidc::get_auth_url(key.bytes, id, redirect) {
         Some(url) => {
             *auth_url = url.to_string().into();
             Error::none()

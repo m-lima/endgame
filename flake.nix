@@ -116,7 +116,7 @@
                     }
 
                     location /callback {
-                      endgame off;
+                      endgame callback;
                     }
                   }
                 }

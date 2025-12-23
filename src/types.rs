@@ -99,30 +99,25 @@ impl In for Token {
 }
 
 pub struct State {
-    nonce: [u8; 32],
-    timestamp: Timestamp,
-    redirect: String,
+    pub nonce: [u8; 32],
+    pub timestamp: Timestamp,
+    pub redirect: openidconnect::url::Url,
 }
 
 impl State {
     #[must_use]
-    pub fn new(nonce: [u8; 32], timestamp: Timestamp, redirect: String) -> Self {
+    pub fn new(nonce: [u8; 32], timestamp: Timestamp, redirect: openidconnect::url::Url) -> Self {
         Self {
             nonce,
             timestamp,
             redirect,
         }
     }
-
-    #[must_use]
-    pub fn nonce(&self) -> &[u8; 32] {
-        &self.nonce
-    }
 }
 
 impl Out for State {
     fn size(&self) -> usize {
-        self.nonce.size() + self.timestamp.size() + self.redirect.size()
+        self.nonce.size() + self.timestamp.size() + self.redirect.as_str().size()
     }
 
     fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
@@ -135,7 +130,9 @@ impl In for State {
     fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let nonce = <[u8; 32]>::read(reader)?;
         let timestamp = Timestamp::read(reader)?;
-        let redirect = Option::read(reader)?.ok_or(std::io::ErrorKind::InvalidData)?;
+        let redirect = Option::read(reader)?
+            .and_then(|ref u| openidconnect::url::Url::parse(u).ok())
+            .ok_or(std::io::ErrorKind::InvalidData)?;
 
         Ok(Self {
             nonce,

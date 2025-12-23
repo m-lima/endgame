@@ -7,15 +7,21 @@
 #include <limits.h>
 #include <stdio.h>
 
+enum endgame_mode_e;
+typedef enum endgame_mode_e endgame_mode_t;
 struct ngx_http_endgame_conf_s;
 typedef struct ngx_http_endgame_conf_s ngx_http_endgame_conf_t;
 
 static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
+                                           ngx_http_endgame_conf_t *egcf);
 static void *ngx_http_endgame_create_conf(ngx_conf_t *cf);
 static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
                                          void *child);
 
+static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
+                                   void *conf);
 static char *endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
                                   void *conf);
 static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -35,8 +41,10 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
                                     RustSlice header_value);
 static ngx_str_t endgame_take_rust_slice(ngx_pool_t *pool, RustSlice *slice);
 
+enum endgame_mode_e { UNSET = -1, DISABLED = 0, ENABLED = 1, CALLBACK = 2 };
+
 struct ngx_http_endgame_conf_s {
-  ngx_flag_t enable;
+  endgame_mode_t mode;
   ngx_flag_t auto_login;
   ngx_str_t login_control_header;
   ngx_str_t session_name;
@@ -54,8 +62,8 @@ struct ngx_http_endgame_conf_s {
 static ngx_command_t ngx_http_endgame_commands[] = {
     {ngx_string("endgame"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-     ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_endgame_conf_t, enable), NULL},
+     endgame_conf_set_mode, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, mode), NULL},
     {ngx_string("endgame_auto_login"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
@@ -148,16 +156,20 @@ static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf) {
 }
 
 static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
-
-  ngx_table_elt_t *cookie;
-  ngx_str_t value;
-
   ngx_http_endgame_conf_t *egcf =
       ngx_http_get_module_loc_conf(r, ngx_http_endgame_module);
 
-  if (!egcf->enable) {
+  switch (egcf->mode) {
+  case CALLBACK:
+    return ngx_http_endgame_callback(r, egcf);
+  case ENABLED:
+    break;
+  default:
     return NGX_DECLINED;
   }
+
+  ngx_table_elt_t *cookie;
+  ngx_str_t value;
 
   cookie = ngx_http_parse_multi_header_lines(r, r->headers_in.cookie,
                                              &egcf->session_name, &value);
@@ -206,6 +218,12 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
   }
 
   return NGX_DECLINED;
+}
+
+static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
+                                           ngx_http_endgame_conf_t *egcf) {
+  ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Args: '%V'", &r->args);
+  return NGX_HTTP_INSUFFICIENT_STORAGE;
 }
 
 static ngx_str_t endgame_take_rust_slice(ngx_pool_t *pool, RustSlice *slice) {
@@ -356,7 +374,7 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
     return NGX_CONF_ERROR;
   }
 
-  conf->enable = NGX_CONF_UNSET;
+  conf->mode = UNSET;
   conf->auto_login = NGX_CONF_UNSET;
   conf->session_ttl = NGX_CONF_UNSET;
 
@@ -368,7 +386,14 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   ngx_http_endgame_conf_t *prev = parent;
   ngx_http_endgame_conf_t *conf = child;
 
-  ngx_conf_merge_value(conf->enable, prev->enable, 0);
+  if (prev->mode == CALLBACK) {
+    return "cannot have an endgame callback as a parent";
+  }
+
+  if (conf->mode == UNSET) {
+    conf->mode = (prev->mode == UNSET) ? DISABLED : prev->mode;
+  }
+
   ngx_conf_merge_value(conf->auto_login, prev->auto_login, 0);
   ngx_conf_merge_str_value(conf->login_control_header,
                            prev->login_control_header, "Endgame-Login");
@@ -384,7 +409,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
     if (prev->session_key_set) {
       conf->session_key = prev->session_key;
       conf->session_key_set = 1;
-    } else if (conf->enable) {
+    } else if (conf->mode == ENABLED || conf->mode == CALLBACK) {
       return "missing endame_session_key";
     }
   }
@@ -400,6 +425,31 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
 
   if (conf->oidc_id == 0) {
     return "endgame discovery not initialized";
+  }
+
+  return NGX_CONF_OK;
+}
+
+static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
+                                   void *conf) {
+  ngx_http_endgame_conf_t *egcf = conf;
+
+  if (egcf->session_key_set) {
+    return "is duplicate";
+  }
+
+  ngx_str_t *arg = cf->args->elts;
+  arg += 1;
+
+  if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("on"))) {
+    egcf->mode = ENABLED;
+  } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("off"))) {
+    egcf->mode = DISABLED;
+  } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("callback"))) {
+    egcf->mode = CALLBACK;
+  } else {
+    ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", arg);
+    return "should be 'on', 'off', or 'callback'";
   }
 
   return NGX_CONF_OK;
