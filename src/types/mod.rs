@@ -1,4 +1,4 @@
-use crate::io::{In, Out};
+pub mod io;
 
 #[derive(Copy, Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Timestamp(u64);
@@ -43,7 +43,7 @@ impl std::ops::Add<u64> for Timestamp {
     }
 }
 
-impl Out for Timestamp {
+impl io::Out for Timestamp {
     fn size(&self) -> usize {
         self.0.size()
     }
@@ -53,12 +53,13 @@ impl Out for Timestamp {
     }
 }
 
-impl In for Timestamp {
+impl io::In for Timestamp {
     fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         u64::read(reader).map(Self)
     }
 }
 
+#[derive(Debug)]
 pub struct Token {
     pub timestamp: Timestamp,
     pub email: String,
@@ -66,7 +67,7 @@ pub struct Token {
     pub family_name: Option<String>,
 }
 
-impl Out for Token {
+impl io::Out for Token {
     fn size(&self) -> usize {
         self.timestamp.size()
             + self.email.size()
@@ -82,7 +83,7 @@ impl Out for Token {
     }
 }
 
-impl In for Token {
+impl io::In for Token {
     fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let timestamp = Timestamp::read(reader)?;
         let email = Option::read(reader)?.ok_or(std::io::ErrorKind::InvalidData)?;
@@ -98,6 +99,7 @@ impl In for Token {
     }
 }
 
+#[derive(Debug)]
 pub struct State {
     pub nonce: [u8; 32],
     pub timestamp: Timestamp,
@@ -115,18 +117,19 @@ impl State {
     }
 }
 
-impl Out for State {
+impl io::Out for State {
     fn size(&self) -> usize {
         self.nonce.size() + self.timestamp.size() + self.redirect.as_str().size()
     }
 
     fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         self.nonce.write(writer)?;
-        self.timestamp.write(writer)
+        self.timestamp.write(writer)?;
+        self.redirect.as_str().write(writer)
     }
 }
 
-impl In for State {
+impl io::In for State {
     fn read<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let nonce = <[u8; 32]>::read(reader)?;
         let timestamp = Timestamp::read(reader)?;

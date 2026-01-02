@@ -7,8 +7,8 @@
 #include <limits.h>
 #include <stdio.h>
 
-enum endgame_mode_e;
-typedef enum endgame_mode_e endgame_mode_t;
+enum ngx_http_endgame_mode_e;
+typedef enum ngx_http_endgame_mode_e ngx_http_endgame_mode_t;
 struct ngx_http_endgame_conf_s;
 typedef struct ngx_http_endgame_conf_s ngx_http_endgame_conf_t;
 
@@ -20,50 +20,74 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf);
 static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
                                          void *child);
 
-static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
-                                   void *conf);
-static char *endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
-                                  void *conf);
-static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
+static char *ngx_http_endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
+                                            void *conf);
+static char *ngx_http_endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
                                            void *conf);
-static char *endgame_conf_set_session_key(ngx_conf_t *cf, ngx_command_t *cmd,
-                                          void *conf);
+static char *ngx_http_endgame_conf_set_nonempty_str(ngx_conf_t *cf,
+                                                    ngx_command_t *cmd,
+                                                    void *conf);
+static char *ngx_http_endgame_conf_set_key(ngx_conf_t *cf, ngx_command_t *cmd,
+                                           void *conf);
+static char *ngx_http_endgame_conf_set_discovery_url(ngx_conf_t *cf,
+                                                     ngx_command_t *cmd,
+                                                     void *conf);
 
-static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
-                                         ngx_http_endgame_conf_t *egcf);
-static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
-                                            ngx_str_t name);
-static ngx_int_t endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right);
-static ngx_int_t endgame_redirect_login(ngx_http_request_t *r,
-                                        ngx_http_endgame_conf_t *egcf);
-static ngx_int_t endgame_set_header(ngx_http_request_t *r,
-                                    ngx_str_t header_name,
-                                    RustSlice header_value);
-static ngx_str_t endgame_take_rust_slice(ngx_pool_t *pool, RustSlice *slice);
+static ngx_int_t
+ngx_http_endgame_handle_unauthed(ngx_http_request_t *r,
+                                 ngx_http_endgame_conf_t *egcf);
+static ngx_int_t
+ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
+                                       ngx_http_endgame_conf_t *egcf);
 
-enum endgame_mode_e { UNSET = -1, DISABLED = 0, ENABLED = 1, CALLBACK = 2 };
+static ngx_table_elt_t *ngx_http_endgame_header_find(ngx_list_part_t *part,
+                                                     ngx_str_t name);
+static ngx_int_t ngx_http_endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right);
+static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
+                                             ngx_str_t header_name,
+                                             RustSlice header_value);
+static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
+                                                  RustSlice *slice);
 
+enum ngx_http_endgame_mode_e {
+  UNSET = -1,
+  DISABLED = 0,
+  ENABLED = 1,
+  CALLBACK = 2
+};
+
+#define UNUSED_ID (size_t)-1
+
+// TODO: Not all locations require all configs
+// TODO: Callbacks (CB) must match the endpoint (EP) config. Right now, we have
+// no guarantee of that
 struct ngx_http_endgame_conf_s {
-  endgame_mode_t mode;
-  ngx_flag_t auto_login;
-  ngx_str_t login_control_header;
-  ngx_str_t session_name;
-  Key session_key;
-  ngx_flag_t session_key_set;
-  time_t session_ttl;
-  ngx_str_t session_domain;
-  ngx_str_t discovery_url;
-  ngx_str_t client_id;
-  ngx_str_t client_secret;
-  ngx_str_t callback_url;
-  uint64_t oidc_id;
+  ngx_http_endgame_mode_t mode;   /* All: Master switch */
+  Key key;                        /* All: Encryption key */
+  ngx_flag_t auto_login;          /* EP: Should it try to login or return 401 */
+  ngx_str_t login_control_header; /* EP: Override header for `auto_login` */
+  ngx_str_t session_name;         /* All: Sesion name in cookie */
+  time_t session_ttl;             /* EP: TTL for the session cookie */
+  ngx_str_t session_domain;       /* CB: Domain for the session cookie */
+  ngx_str_t client_id;            /* All: OIDC client ID */
+  ngx_str_t client_secret;        /* CB: OIDC client secret */
+  ngx_str_t callback_url;         /* All: OIDC callback endpoint */
+
+  // Internal
+  ngx_flag_t key_set; /* If the key was set */
+  size_t oidc_id;     /* Id for fetched OIDC config */
 };
 
 static ngx_command_t ngx_http_endgame_commands[] = {
     {ngx_string("endgame"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
-     endgame_conf_set_mode, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_mode, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, mode), NULL},
+    {ngx_string("endgame_key"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE2,
+     ngx_http_endgame_conf_set_key, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, key), NULL},
     {ngx_string("endgame_auto_login"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF | NGX_CONF_FLAG,
      ngx_conf_set_flag_slot, NGX_HTTP_LOC_CONF_OFFSET,
@@ -71,18 +95,13 @@ static ngx_command_t ngx_http_endgame_commands[] = {
     {ngx_string("endgame_login_control_header"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, login_control_header), NULL},
     {ngx_string("endgame_session_name"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, session_name), NULL},
-    {ngx_string("endgame_session_key"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-         NGX_CONF_TAKE2,
-     endgame_conf_set_session_key, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_endgame_conf_t, session_key), NULL},
     {ngx_string("endgame_session_ttl"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
@@ -91,27 +110,27 @@ static ngx_command_t ngx_http_endgame_commands[] = {
     {ngx_string("endgame_session_domain"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_str, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, session_domain), NULL},
     {ngx_string("endgame_discovery_url"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
-     offsetof(ngx_http_endgame_conf_t, discovery_url), NULL},
+     ngx_http_endgame_conf_set_discovery_url, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, oidc_id), NULL},
     {ngx_string("endgame_client_id"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, client_id), NULL},
     {ngx_string("endgame_client_secret"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, client_secret), NULL},
     {ngx_string("endgame_callback_url"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+     ngx_http_endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, callback_url), NULL},
     ngx_null_command};
 
@@ -175,15 +194,15 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
                                              &egcf->session_name, &value);
 
   if (cookie == NULL || value.len == 0) {
-    return endgame_handle_unauthed(r, egcf);
+    return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
   RustSlice email = endgame_rust_slice_null(),
             given = endgame_rust_slice_null(),
             family = endgame_rust_slice_null();
 
-  Error error = endgame_token_decrypt(
-      egcf->session_key, value, egcf->session_ttl, &email, &given, &family);
+  Error error = endgame_token_decrypt(egcf->key, value, egcf->session_ttl,
+                                      &email, &given, &family);
   if (error.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error);
@@ -194,25 +213,27 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     endgame_rust_slice_free(&email);
     endgame_rust_slice_free(&given);
     endgame_rust_slice_free(&family);
-    return endgame_handle_unauthed(r, egcf);
+    return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
   ngx_int_t result;
-  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), email);
+  result =
+      ngx_http_endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), email);
   if (result != NGX_OK) {
     endgame_rust_slice_free(&given);
     endgame_rust_slice_free(&family);
     return result;
   }
 
-  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Given-Name"), given);
+  result = ngx_http_endgame_set_header(r, (ngx_str_t)ngx_string("X-Given-Name"),
+                                       given);
   if (result != NGX_OK) {
     endgame_rust_slice_free(&family);
     return result;
   }
 
-  result =
-      endgame_set_header(r, (ngx_str_t)ngx_string("X-Family-Name"), family);
+  result = ngx_http_endgame_set_header(
+      r, (ngx_str_t)ngx_string("X-Family-Name"), family);
   if (result != NGX_OK) {
     return result;
   }
@@ -222,11 +243,21 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
 
 static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
                                            ngx_http_endgame_conf_t *egcf) {
+  // TODO!!!
   ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Args: '%V'", &r->args);
+  Error error = endgame_auth_exchange_token(
+      r->args, egcf->key, egcf->oidc_id, egcf->client_id, egcf->client_secret,
+      egcf->callback_url);
+  if (error.data != NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "failed to get auth url: '%V'", &error);
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
   return NGX_HTTP_INSUFFICIENT_STORAGE;
 }
 
-static ngx_str_t endgame_take_rust_slice(ngx_pool_t *pool, RustSlice *slice) {
+static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
+                                                  RustSlice *slice) {
   ngx_str_t output = {.data = ngx_pnalloc(pool, slice->len), .len = slice->len};
   if (output.data != NULL) {
     ngx_memcpy(output.data, slice->ptr, slice->len);
@@ -235,12 +266,12 @@ static ngx_str_t endgame_take_rust_slice(ngx_pool_t *pool, RustSlice *slice) {
   return output;
 }
 
-static ngx_int_t endgame_set_header(ngx_http_request_t *r,
-                                    ngx_str_t header_name,
-                                    RustSlice header_value) {
+static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
+                                             ngx_str_t header_name,
+                                             RustSlice header_value) {
   // Disable the header first thing
   ngx_table_elt_t *header =
-      endgame_header_find(&r->headers_in.headers.part, header_name);
+      ngx_http_endgame_header_find(&r->headers_in.headers.part, header_name);
   if (header != NULL) {
     header->hash = 0;
   }
@@ -252,7 +283,8 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
   }
 
   // Copy the rust string into a ngx_str_t
-  ngx_str_t header_value_str = endgame_take_rust_slice(r->pool, &header_value);
+  ngx_str_t header_value_str =
+      ngx_http_endgame_take_rust_slice(r->pool, &header_value);
   if (header_value_str.data == NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "Could not allocate `%V` string", &header_name);
@@ -280,31 +312,32 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
   return NGX_OK;
 }
 
-static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
-                                         ngx_http_endgame_conf_t *egcf) {
-  ngx_table_elt_t *maybe_header = endgame_header_find(
+static ngx_int_t
+ngx_http_endgame_handle_unauthed(ngx_http_request_t *r,
+                                 ngx_http_endgame_conf_t *egcf) {
+  ngx_table_elt_t *maybe_header = ngx_http_endgame_header_find(
       &r->headers_in.headers.part, egcf->login_control_header);
 
   // Endgame-Login: never
   // Endgame-Login: always
   if (egcf->auto_login) {
     if (maybe_header != NULL &&
-        !endgame_ngx_str_t_eq(maybe_header->value,
-                              (ngx_str_t)ngx_string("never"))) {
-      return endgame_redirect_login(r, egcf);
+        !ngx_http_endgame_ngx_str_t_eq(maybe_header->value,
+                                       (ngx_str_t)ngx_string("never"))) {
+      return ngx_http_endgame_handle_redirect_login(r, egcf);
     }
   } else {
     if (maybe_header != NULL &&
-        endgame_ngx_str_t_eq(maybe_header->value,
-                             (ngx_str_t)ngx_string("always"))) {
-      return endgame_redirect_login(r, egcf);
+        ngx_http_endgame_ngx_str_t_eq(maybe_header->value,
+                                      (ngx_str_t)ngx_string("always"))) {
+      return ngx_http_endgame_handle_redirect_login(r, egcf);
     }
   }
   return NGX_HTTP_UNAUTHORIZED;
 }
 
-static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
-                                            ngx_str_t name) {
+static ngx_table_elt_t *ngx_http_endgame_header_find(ngx_list_part_t *part,
+                                                     ngx_str_t name) {
   if (name.data == NULL) {
     return NULL;
   }
@@ -323,7 +356,7 @@ static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
     }
 
     ngx_str_t key = h[i].key;
-    if (endgame_ngx_str_t_eq(key, name)) {
+    if (ngx_http_endgame_ngx_str_t_eq(key, name)) {
       return &h[i];
     }
   }
@@ -331,7 +364,8 @@ static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
   return NULL;
 }
 
-static ngx_int_t endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right) {
+static ngx_int_t ngx_http_endgame_ngx_str_t_eq(ngx_str_t left,
+                                               ngx_str_t right) {
   if (left.data == NULL || right.data == NULL) {
     return left.data == right.data;
   }
@@ -341,13 +375,14 @@ static ngx_int_t endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right) {
           ngx_strncasecmp(left.data, right.data, left.len) == 0);
 }
 
-static ngx_int_t endgame_redirect_login(ngx_http_request_t *r,
-                                        ngx_http_endgame_conf_t *egcf) {
+static ngx_int_t
+ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
+                                       ngx_http_endgame_conf_t *egcf) {
   RustSlice location = endgame_rust_slice_null();
 
-  Error error = endgame_oidc_get_url(egcf->session_key, egcf->oidc_id,
-                                     r->headers_in.host->value, r->unparsed_uri,
-                                     &location);
+  Error error = endgame_auth_redirect_login_url(
+      egcf->key, egcf->oidc_id, egcf->client_id, egcf->callback_url,
+      r->headers_in.host->value, r->unparsed_uri, &location);
 
   if (error.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -362,7 +397,7 @@ static ngx_int_t endgame_redirect_login(ngx_http_request_t *r,
 
   loc->hash = 1;
   ngx_str_set(&loc->key, "Location");
-  loc->value = endgame_take_rust_slice(r->pool, &location);
+  loc->value = ngx_http_endgame_take_rust_slice(r->pool, &location);
   return NGX_HTTP_MOVED_TEMPORARILY;
 }
 
@@ -377,6 +412,7 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
   conf->mode = UNSET;
   conf->auto_login = NGX_CONF_UNSET;
   conf->session_ttl = NGX_CONF_UNSET;
+  conf->oidc_id = UNUSED_ID;
 
   return conf;
 }
@@ -400,52 +436,48 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   ngx_conf_merge_str_value(conf->session_name, prev->session_name, "endgame");
   ngx_conf_merge_sec_value(conf->session_ttl, prev->session_ttl, 60 * 60);
   ngx_conf_merge_str_value(conf->session_domain, prev->session_domain, "");
-  ngx_conf_merge_str_value(conf->discovery_url, prev->discovery_url, "");
   ngx_conf_merge_str_value(conf->client_id, prev->client_id, "");
   ngx_conf_merge_str_value(conf->client_secret, prev->client_secret, "");
   ngx_conf_merge_str_value(conf->callback_url, prev->callback_url, "");
 
-  if (!conf->session_key_set) {
-    if (prev->session_key_set) {
-      conf->session_key = prev->session_key;
-      conf->session_key_set = 1;
+  if (!conf->key_set) {
+    if (prev->key_set) {
+      conf->key = prev->key;
+      conf->key_set = 1;
     } else if (conf->mode == ENABLED || conf->mode == CALLBACK) {
-      return "missing endame_session_key";
+      return "missing endame_key";
     }
   }
 
-  Error error = endgame_oidc_discover(conf->discovery_url, conf->client_id,
-                                      conf->client_secret, conf->callback_url,
-                                      &conf->oidc_id);
-  if (error.data != NULL) {
-    ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to call OIDC discover: '%V'",
-                  &error);
-    return "endgame discovery could not be called";
-  }
-
-  if (conf->oidc_id == 0) {
-    return "endgame discovery not initialized";
+  if (conf->oidc_id == UNUSED_ID) {
+    if (prev->oidc_id != UNUSED_ID) {
+      conf->oidc_id = prev->oidc_id;
+    } else {
+      return "endgame discovery not initialized";
+    }
   }
 
   return NGX_CONF_OK;
 }
 
-static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
-                                   void *conf) {
+static char *ngx_http_endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
+                                            void *conf) {
   ngx_http_endgame_conf_t *egcf = conf;
 
-  if (egcf->session_key_set) {
+  if (egcf->key_set) {
     return "is duplicate";
   }
 
   ngx_str_t *arg = cf->args->elts;
   arg += 1;
 
-  if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("on"))) {
+  if (ngx_http_endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("on"))) {
     egcf->mode = ENABLED;
-  } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("off"))) {
+  } else if (ngx_http_endgame_ngx_str_t_eq(*arg,
+                                           (ngx_str_t)ngx_string("off"))) {
     egcf->mode = DISABLED;
-  } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("callback"))) {
+  } else if (ngx_http_endgame_ngx_str_t_eq(*arg,
+                                           (ngx_str_t)ngx_string("callback"))) {
     egcf->mode = CALLBACK;
   } else {
     ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", arg);
@@ -455,8 +487,8 @@ static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
   return NGX_CONF_OK;
 }
 
-static char *endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
-                                  void *conf) {
+static char *ngx_http_endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
+                                           void *conf) {
   ngx_str_t *field = (ngx_str_t *)((char *)conf + cmd->offset);
 
   if (field->data) {
@@ -477,9 +509,10 @@ static char *endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
   return NGX_CONF_OK;
 }
 
-static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
-                                           void *conf) {
-  char *out = endgame_conf_set_str(cf, cmd, conf);
+static char *ngx_http_endgame_conf_set_nonempty_str(ngx_conf_t *cf,
+                                                    ngx_command_t *cmd,
+                                                    void *conf) {
+  char *out = ngx_http_endgame_conf_set_str(cf, cmd, conf);
   if (out) {
     return out;
   }
@@ -493,11 +526,11 @@ static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
   return NGX_CONF_OK;
 }
 
-static char *endgame_conf_set_session_key(ngx_conf_t *cf, ngx_command_t *cmd,
-                                          void *conf) {
+static char *ngx_http_endgame_conf_set_key(ngx_conf_t *cf, ngx_command_t *cmd,
+                                           void *conf) {
   ngx_http_endgame_conf_t *egcf = conf;
 
-  if (egcf->session_key_set) {
+  if (egcf->key_set) {
     return "is duplicate";
   }
 
@@ -505,12 +538,12 @@ static char *endgame_conf_set_session_key(ngx_conf_t *cf, ngx_command_t *cmd,
   ngx_str_t *kind = arg + 1;
   ngx_str_t *value = arg + 2;
 
-  if (endgame_ngx_str_t_eq(*kind, (ngx_str_t)ngx_string("raw"))) {
+  if (ngx_http_endgame_ngx_str_t_eq(*kind, (ngx_str_t)ngx_string("raw"))) {
     if (value->len != 44 || value->data[43] != '=' || value->data[42] == '=') {
       return "is not a 32-byte key";
     }
 
-    ngx_str_t decoded = {.data = egcf->session_key.bytes};
+    ngx_str_t decoded = {.data = egcf->key.bytes};
     // Using the actual destination for decrypting
     // Here we know that it should fit, and we leave the decoding to set the
     // `len` field
@@ -522,9 +555,10 @@ static char *endgame_conf_set_session_key(ngx_conf_t *cf, ngx_command_t *cmd,
       return "is not a decoded 32-byte key";
     }
 
-    egcf->session_key_set = 1;
-  } else if (endgame_ngx_str_t_eq(*kind, (ngx_str_t)ngx_string("file"))) {
-    Error error = endgame_load_key(*value, &egcf->session_key);
+    egcf->key_set = 1;
+  } else if (ngx_http_endgame_ngx_str_t_eq(*kind,
+                                           (ngx_str_t)ngx_string("file"))) {
+    Error error = endgame_conf_load_key(*value, &egcf->key);
     if (error.data != NULL) {
       ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to load key: '%V'",
                     &error);
@@ -536,6 +570,34 @@ static char *endgame_conf_set_session_key(ngx_conf_t *cf, ngx_command_t *cmd,
     return "should be 'raw' or 'file'";
   }
 
-  egcf->session_key_set = 1;
+  egcf->key_set = 1;
+  return NGX_CONF_OK;
+}
+
+static char *ngx_http_endgame_conf_set_discovery_url(ngx_conf_t *cf,
+                                                     ngx_command_t *cmd,
+                                                     void *conf) {
+  ngx_http_endgame_conf_t *egcf = conf;
+
+  if (egcf->oidc_id != UNUSED_ID) {
+    return "is duplicate";
+  }
+
+  ngx_str_t *arg = cf->args->elts;
+  arg += 1;
+
+  Error error = endgame_conf_oidc_discover(*arg, &egcf->oidc_id);
+  if (error.data != NULL) {
+    ngx_log_error(NGX_LOG_ERR, cf->log, 0,
+                  "failed to discover OIDC configuration: '%V'", &error);
+    return "could not resolve to an OIDC configuration";
+  }
+
+  if (egcf->oidc_id == UNUSED_ID) {
+    ngx_log_error(NGX_LOG_ERR, cf->log, 0,
+                  "cannot have more than usize::MAX configurations");
+    return "has overflowed the number of OIDC configurations";
+  }
+
   return NGX_CONF_OK;
 }

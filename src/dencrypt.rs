@@ -1,13 +1,14 @@
-use crate::io;
+use crate::types::io;
 
 #[must_use]
-pub fn encrypt<P: io::Out>(key: crypter::Key, payload: &P) -> Option<String> {
+pub fn encrypt<P: io::Out>(key: crypter::Key, payload: &P) -> anyhow::Result<String> {
     let mut buffer = Vec::with_capacity(payload.size());
-    payload.write(&mut buffer).ok()?;
+    payload.write(&mut buffer)?;
 
-    let encrypted = crypter::encrypt(&key, buffer.as_slice())?;
+    let encrypted = crypter::encrypt(&key, buffer.as_slice())
+        .ok_or_else(|| anyhow::anyhow!("Could not encrypt"))?;
 
-    Some(base64::Engine::encode(
+    Ok(base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
         &encrypted,
     ))
