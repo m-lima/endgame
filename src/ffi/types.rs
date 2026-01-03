@@ -99,22 +99,29 @@ impl From<String> for RustSlice {
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Error {
+    pub status: u16,
     pub len: usize,
     pub data: *const u8,
 }
 
 impl Error {
-    pub const fn new(msg: &'static str) -> Self {
+    pub const fn new(status: u16, msg: &'static str) -> Self {
         Self {
+            status,
             len: msg.len(),
             data: msg.as_ptr(),
         }
     }
 
-    pub const fn none() -> Self {
+    pub const fn no_msg(status: u16) -> Self {
         Self {
+            status,
             len: 0,
             data: std::ptr::null(),
         }
+    }
+
+    pub const fn none() -> Self {
+        Self::no_msg(0)
     }
 }

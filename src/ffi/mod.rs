@@ -1,113 +1,66 @@
 mod types;
 
-macro_rules! attempt {
-    ($value: expr, $name: ident, $problem: literal) => {
-        match $value {
-            Some(value) => value,
-            None => {
-                return crate::ffi::types::Error::new(concat!(
-                    "Parameter `",
-                    stringify!($name),
-                    "` is ",
-                    $problem
-                ))
-            }
-        }
+macro_rules! log_err {
+    ($msg: expr, $err: expr) => {
+        eprintln!(concat!(env!("CARGO_CRATE_NAME"), ": ", $msg, ": {}"), $err)
     };
-    (url $name: ident) => {
-        attempt!(ok url::Url::parse(as_str!($name)), $name, "not a valid URL")
-    };
-    (ok $value: expr, $name: ident, $problem: literal) => {
-        attempt!(
-            $value
-                .map_err(|err| {
-                    eprintln!(
-                        concat!(
-                            env!("CARGO_CRATE_NAME"),
-                            ": Error while parsing `",
-                            stringify!($name),
-                            "`: {:?}"
-                        ),
-                        err
-                    )
-                })
-                .ok(),
-            $name,
-            $problem
-        )
-    };
-    (ret $value: expr, $ret: ident, $problem: literal) => {
-        match $value {
-            Ok(value) => {
-                *$ret = value;
-                Error::none()
-            }
-            Err(error) => {
-                eprintln!(
-                    concat!(env!("CARGO_CRATE_NAME"), ": ", $problem, ": {:?}"),
-                    error
-                );
-                Error::new($problem)
-            }
-        }
-    };
-}
-
-macro_rules! as_str {
-    ($value: ident) => {{
-        let value = attempt!($value.as_option(), $value, "null");
-        let value = attempt!(ok
-            str::from_utf8(value),
-            $value,
-            "not valid UTF-8"
-        );
-        let value = value.trim();
-        attempt!(
-            (!value.is_empty()).then_some(value),
-            $value,
-            "empty"
-        )
-    }};
-}
-
-macro_rules! check_null {
-    ($value: ident) => {
-        attempt!($value.ptr.is_null().then_some(()), $value, "null");
-    };
-    ($value: ident $($rest: ident) *) => {{
-        check_null!($value);
-        check_null!($($rest) *);
-    }};
 }
 
 mod conf {
-    use super::types::{Error, Key, ngx_str_t};
-    use crate::oidc;
+    use super::types::{Key, ngx_str_t};
+    use crate::oidc::config as oidc;
+
+    macro_rules! bail {
+        ($err: literal) => {
+            return $err.as_ptr()
+        };
+        ($err: literal, $msg: literal, $reason: expr) => {{
+            log_err!($msg, $reason);
+            bail!($err);
+        }};
+    }
+
+    macro_rules! as_str {
+        ($value: ident) => {{
+            let Some(value) = $value.as_option() else {
+                bail!(c"is null");
+            };
+            let Ok(value) = str::from_utf8(value) else {
+                bail!(c"is not valid UTF-8");
+            };
+            let value = value.trim();
+            if value.is_empty() {
+                bail!(c"is empty");
+            }
+            value
+        }};
+    }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_conf_load_key(path: ngx_str_t, key: &mut Key) -> Error {
+    pub extern "C" fn endgame_conf_load_key(path: ngx_str_t, key: &mut Key) -> *const i8 {
         let path = std::path::PathBuf::from(as_str!(path));
         if !path.exists() {
-            return Error::new("Path does not exist");
+            return c"does not exist".as_ptr();
         }
 
-        let Ok(mut file) = std::fs::File::open(path) else {
-            return Error::new("Could not open path");
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) => bail!(c"is unreadable", "Could not open path", e),
         };
 
         let mut bytes = 0;
         while bytes < key.bytes.len() {
             match std::io::Read::read(&mut file, &mut key.bytes[bytes..]) {
-                Ok(0) => return Error::new("Key is not large enough. Need 32 bytes"),
-                Err(_) => return Error::new("Could not read file"),
+                Err(e) => bail!(c"is unreadable", "Could not read file", e),
+                Ok(0) => bail!(c"is not large enough. Need 32 bytes"),
                 Ok(b) => bytes += b,
             }
         }
 
         match std::io::Read::read(&mut file, &mut [0; 1]) {
-            Ok(0) => Error::none(),
-            Ok(_) => Error::new("Key is too large. Need 32 bytes"),
-            Err(_) => Error::new("Could not read file"),
+            Ok(0) => std::ptr::null(),
+            Ok(_) => bail!(c"is too large. Need 32 bytes"),
+            Err(e) => bail!(c"is unreadable", "Could not read file", e),
         }
     }
 
@@ -115,32 +68,104 @@ mod conf {
     pub extern "C" fn endgame_conf_oidc_discover(
         discovery_url: ngx_str_t,
         oidc_id: &mut usize,
-    ) -> Error {
-        attempt!(ret oidc::discover(as_str!(discovery_url)), oidc_id, "Could not discover OIDC configuration")
+    ) -> *const i8 {
+        let discovery_url = as_str!(discovery_url);
+
+        match oidc::discover(discovery_url) {
+            Ok(id) => {
+                *oidc_id = id;
+                std::ptr::null()
+            }
+            Err(oidc::Error::BadUrl(err)) => {
+                bail!(c"is not a valid URL", "Could not parse the URL", err)
+            }
+            Err(oidc::Error::UrlNotAbsolute) => {
+                bail!(c"is not an absolute URL")
+            }
+            Err(oidc::Error::Request(err)) => {
+                bail!(c"could not be fetched", "Failed to make request", err)
+            }
+            Err(oidc::Error::BadIssuer(left, right)) => {
+                bail!(
+                    c"does no match the discovered issuer",
+                    "Mismatched issuer",
+                    format!("{left} != {right}")
+                )
+            }
+        }
     }
 }
 
 mod auth {
     use super::types::{Error, Key, RustSlice, ngx_str_t};
-    use crate::{oidc, types::Timestamp};
+    use crate::{dencrypt, oidc::auth as oidc, types};
 
-    macro_rules! make_uri {
-        ($host: ident, $path: ident) => {{
-            let host = as_str!($host);
-            let path = as_str!($path);
-            match url::Url::parse(&format!("https://{host}{path}")) {
-                Ok(url) => url,
-                Err(error) => {
-                    eprintln!(
-                        concat!(
-                            env!("CARGO_CRATE_NAME"),
-                            ": The constructed redirect URL is not valid: {:?}"
-                        ),
-                        error
+    macro_rules! bail {
+        ($name: ident, $problem: literal) => {
+            return crate::ffi::types::Error::new(
+                500,
+                concat!("Parameter `", stringify!($name), "` is ", $problem),
+            )
+        };
+    }
+
+    macro_rules! attempt {
+        (if $check: expr, $name: ident, $problem: literal) => {
+            if !$check {
+                bail!($name, $problem);
+            }
+        };
+        (or $value: expr, $name: ident, $problem: literal) => {
+            match $value {
+                Some(value) => value,
+                None => bail!($name, $problem),
+            }
+        };
+        (ok $value: expr, $name: ident, $problem: literal) => {
+            match $value {
+                Ok(value) => value,
+                Err(err) => {
+                    log_err!(
+                        concat!("Error while parsing `", stringify!($name), "`"),
+                        err
                     );
-                    return Error::new("The constructed redirect URL is not valid");
+                    bail!($name, $problem);
                 }
             }
+        };
+    }
+
+    macro_rules! arg {
+        (bytes $value:ident) => {
+            attempt!(or $value.as_option(), $value, "null")
+        };
+        (str $value:ident) => {{
+            let value = arg!(bytes $value);
+            let value = attempt!(ok str::from_utf8(value), $value, "not valid UTF-8");
+            let value = value.trim();
+            attempt!(if value.is_empty(), $value, "empty");
+            value
+        }};
+        (url $value: ident) => {
+            attempt!(ok url::Url::parse(arg!(str $value)), $value, "not a valid URL")
+        };
+        (url $host: ident, $path: ident) => {{
+            let host = arg!(str $host);
+            let path = arg!(str $path);
+            match url::Url::parse(&format!("https://{host}{path}")) {
+                Ok(url) => url,
+                Err(err) => {
+                    log_err!("The constructed redirect URL is not valid", err);
+                    return Error::new(500, "The constructed redirect URL is not valid");
+                }
+            }
+        }};
+        (null $value: ident) => {
+            attempt!(if $value.ptr.is_null(), $value, "null")
+        };
+        (null $value: ident $($rest: ident) *) => {{
+            arg!(null $value);
+            arg!(null $($rest) *);
         }};
     }
 
@@ -152,25 +177,22 @@ mod auth {
         callback_url: ngx_str_t,
         redirect_host: ngx_str_t,
         redirect_path: ngx_str_t,
-        auth_url: &mut RustSlice,
+        login_url: &mut RustSlice,
     ) -> Error {
-        check_null!(auth_url);
-        let client_id = as_str!(client_id);
-        let callback_url = attempt!(url callback_url);
-        let redirect = make_uri!(redirect_host, redirect_path);
+        let client_id = arg!(str client_id);
+        let callback_url = arg!(url callback_url);
+        let redirect = arg!(url redirect_host, redirect_path);
 
-        attempt!(
-            ret
-            oidc::get_redirect_login_url(
-                key.bytes,
-                oidc_id,
-                client_id,
-                &callback_url,
-                redirect,
-            ).map(|url| url.to_string().into()),
-            auth_url,
-            "Failed to create authentication URL"
-        )
+        match oidc::get_redirect_login_url(key.bytes, oidc_id, client_id, &callback_url, redirect) {
+            Ok(url) => {
+                *login_url = url.to_string().into();
+                Error::none()
+            }
+            Err(oidc::RedirectError::MissingConfiguration) => {
+                Error::new(500, "Missing OIDC configuration for redirection")
+            }
+            Err(oidc::RedirectError::Encryption) => Error::new(500, "Failed to encrypt state"),
+        }
     }
 
     #[unsafe(no_mangle)]
@@ -182,20 +204,25 @@ mod auth {
         client_secret: ngx_str_t,
         callback_url: ngx_str_t,
     ) -> Error {
-        let query = as_str!(query);
-        let client_id = as_str!(client_id);
-        let client_secret = as_str!(client_secret);
-        let callback = attempt!(url callback_url);
-        // TODO
-        let _ = oidc::exchange_code(
+        let query = arg!(str query);
+        let client_id = arg!(str client_id);
+        let client_secret = arg!(str client_secret);
+        let callback = arg!(url callback_url);
+
+        match oidc::exchange_code(
             query,
             key.bytes,
             oidc_id,
             client_id,
             client_secret,
             callback,
-        );
-        Error::new("yoooooo")
+        ) {
+            Ok(()) => Error::none(),
+            Err(oidc::ExchangeCodeError::MissingConfiguration) => {
+                Error::new(500, "Missing OIDC configuration for redirection")
+            }
+            Err(oidc::ExchangeCodeError::BadQueryParam) => Error::no_msg(400),
+        }
     }
 
     #[unsafe(no_mangle)]
@@ -207,15 +234,15 @@ mod auth {
         given_name: &mut RustSlice,
         family_name: &mut RustSlice,
     ) -> Error {
-        check_null!(email given_name family_name);
+        arg!(null email given_name family_name);
 
-        let Some(src) = src.as_option() else {
-            return Error::new("Source is null");
-        };
+        let src = arg!(bytes src);
 
-        let min_timestamp = Timestamp::now() - max_age_secs;
+        let min_timestamp = types::Timestamp::now() - max_age_secs;
 
-        if let Some(token) = oidc::token::decrypt(key.bytes, src, min_timestamp) {
+        if let Some(token) = dencrypt::decrypt::<types::Token>(key.bytes, src)
+            .filter(|t| t.timestamp >= min_timestamp)
+        {
             *email = token.email.into();
             *given_name = token.given_name.map_or(RustSlice::none(), RustSlice::from);
             *family_name = token.family_name.map_or(RustSlice::none(), RustSlice::from);

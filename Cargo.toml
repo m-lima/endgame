@@ -7,7 +7,6 @@ edition = "2024"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-anyhow = "1.0.100"
 atomic_refcell = "0.1.13"
 base64 = "0.22.1"
 # TODO: Use from crates

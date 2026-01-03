@@ -64,6 +64,8 @@ enum ngx_http_endgame_mode_e {
 // TODO: Not all locations require all configs
 // TODO: Callbacks (CB) must match the endpoint (EP) config. Right now, we have
 // no guarantee of that
+// TODO: Group a set of configs into a single entry (key, client_*, callback)
+// and possibly merge all of these into a single pointer
 struct ngx_http_endgame_conf_s {
   ngx_http_endgame_mode_t mode;   /* All: Master switch */
   Key key;                        /* All: Encryption key */
@@ -463,7 +465,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   if (conf->oidc_id == UNUSED_ID) {
     if (prev->oidc_id != UNUSED_ID) {
       conf->oidc_id = prev->oidc_id;
-    } else {
+    } else if (conf->mode == ENABLED || conf->mode == CALLBACK) {
       return "endgame discovery not initialized";
     }
   }
