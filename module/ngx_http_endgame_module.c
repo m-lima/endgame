@@ -12,6 +12,9 @@ typedef enum ngx_http_endgame_mode_e ngx_http_endgame_mode_t;
 struct ngx_http_endgame_conf_s;
 typedef struct ngx_http_endgame_conf_s ngx_http_endgame_conf_t;
 
+struct ngx_http_endgame_async_ctx_s;
+typedef struct ngx_http_endgame_async_ctx_s ngx_http_endgame_async_ctx_t;
+
 static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf);
 static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
@@ -76,6 +79,14 @@ struct ngx_http_endgame_conf_s {
   // Internal
   ngx_flag_t key_set; /* If the key was set */
   size_t oidc_id;     /* Id for fetched OIDC config */
+};
+
+struct ngx_http_endgame_async_ctx_s {
+  ngx_http_request_t *r;
+  ngx_event_t evt;
+  RustSlice response;
+  ngx_int_t id;
+  ngx_flag_t cancelled;
 };
 
 static ngx_command_t ngx_http_endgame_commands[] = {

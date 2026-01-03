@@ -4,23 +4,13 @@ use crate::{dencrypt, types};
 
 type Result<T = ()> = anyhow::Result<T>;
 
-struct Requester {
-    client: reqwest::Client,
-    rt: tokio::runtime::Runtime,
+// TODO: Categorize the errors here and remove anyhow
+enum Error {
+    BadConfig(Option<Box<dyn std::error::Error>>, &'static str),
+    BadRequest,
+    BadPayloadFromUpstream,
+    NotAuthed,
 }
-
-static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| Requester {
-    client: reqwest::ClientBuilder::new()
-        .redirect(openidconnect::reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(5 * 60))
-        .build()
-        .expect("Could not create HTTP client"),
-
-    rt: tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("Could not build async runtime"),
-});
 
 static CONFIGS: atomic_refcell::AtomicRefCell<Vec<DiscoveryDocument>> =
     atomic_refcell::AtomicRefCell::new(Vec::new());
@@ -48,16 +38,19 @@ pub fn discover(discovery_url: &str) -> Result<usize> {
         return Ok(idx);
     }
 
-    let body = REQUESTER.rt.block_on(async {
-        let response = REQUESTER
-            .client
-            .get(discovery_url)
-            .timeout(std::time::Duration::from_secs(60))
-            .send()
-            .await?;
-        let body = response.bytes().await?;
-        Result::Ok(body)
-    })?;
+    let body = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let response = reqwest::ClientBuilder::new()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()?
+                .get(discovery_url)
+                .send()
+                .await?;
+            let body = response.bytes().await?;
+            Result::Ok(body)
+        })?;
 
     let config = serde_json::from_slice::<DiscoveryDocument>(&body)?;
     if config.issuer != issuer {
@@ -118,6 +111,32 @@ pub fn exchange_code(
     client_secret: &str,
     callback: url::Url,
 ) -> Result<Option<openidconnect::url::Url>> {
+    struct Requester {
+        client: reqwest::Client,
+        rt: tokio::runtime::Runtime,
+    }
+
+    static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| {
+        let layer = treetrace::Layer::builder(treetrace::Stderr).build();
+        let subscriber =
+            tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), layer);
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+
+        Requester {
+            client: reqwest::ClientBuilder::new()
+                .redirect(openidconnect::reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("Could not create HTTP client"),
+
+            rt: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Could not build async runtime"),
+        }
+    });
+
     fn get_param<'q>(query: &'q str, param: &str) -> Option<&'q str> {
         query
             .split('&')
@@ -134,8 +153,6 @@ pub fn exchange_code(
     // TODO
     const FIVE_MINUTES: u64 = 60 * 5 * 100_000;
 
-    eprintln!("Will parse: {query}");
-    eprintln!("Will get state");
     let Some(state) = get_param(query, "state")
         .and_then(|s| dencrypt::decrypt::<types::State>(key, s.as_bytes()))
         .filter(|s| s.timestamp >= types::Timestamp::now() - FIVE_MINUTES)
@@ -143,73 +160,67 @@ pub fn exchange_code(
         return Ok(None);
     };
     eprintln!("State {state:?}");
-    eprintln!("Will get code");
-    let Some(code) = get_param(query, "code") else {
+    let Some(code) = get_param(query, "code")
+        .map(|c| percent_encoding::percent_decode(c.as_bytes()).collect::<Vec<_>>())
+        .map(String::from_utf8)
+    else {
         return Ok(None);
     };
+    let code = code?;
     eprintln!("Code {code:?}");
 
-    eprintln!("Will get config");
     let configs = CONFIGS.borrow();
     let config = configs
         .get(oidc_id)
         .ok_or_else(|| anyhow::anyhow!("No configuration found for OIDC id {oidc_id}"))?;
-    eprintln!("Got config");
 
-    eprintln!("Will exchange token");
-    let body = REQUESTER.rt.block_on(async {
-        let response = REQUESTER
-            .client
-            .post(config.token_endpoint.clone())
-            .form(&TokenExchange {
-                code,
-                client_id,
-                client_secret,
-                callback_uri: callback,
-                grant_type: "authorization_code",
-            })
-            .send()
-            .await?;
-        let body = response.bytes().await?;
+    let payload = TokenExchange {
+        code,
+        client_id: String::from(client_id),
+        client_secret: String::from(client_secret),
+        redirect_uri: callback,
+        grant_type: "authorization_code",
+    };
+    let endpoint = config.token_endpoint.clone();
+
+    REQUESTER.rt.spawn(async move {
+        tracing::info!(token = ?payload, "Will exchange token");
+        let response = match REQUESTER.client.post(endpoint).form(&payload).send().await {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::error!(?error, "Failed to call endpoint");
+                return Err(error.into());
+            }
+        };
+        let body = match response.bytes().await {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::error!(?error, "Failed to get bytes");
+                return Err(error.into());
+            }
+        };
+        let token = match serde_json::from_slice::<TokenExchangeResponse>(&body) {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::error!(?error, "Failed to parse");
+                tracing::warn!(body = %String::from_utf8_lossy(&body), "Original body");
+                return Err(error.into());
+            }
+        };
+        tracing::info!("Exchanged token: {token:?}");
         Result::Ok(body)
-    })?;
-    let token = serde_json::from_slice::<TokenExchangeResponse>(&body)?;
+    });
 
-    eprintln!("TOKEN:{token:?}");
-
-    // TODO
-    // let token = client.exchange_code(code).ok()?.request(&*CLIENT).ok();
-    // eprintln!("Sent");
-    // let token = token?;
-    // let nonce = openidconnect::Nonce::new(base64::Engine::encode(
-    //     &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-    //     state.nonce,
-    // ));
-    // eprintln!("Exchanged token. Nonce {nonce:?}");
-    // eprintln!("Will get id token");
-    // let id_token = token
-    //     .extra_fields()
-    //     .id_token()?
-    //     .claims(&client.id_token_verifier(), &nonce)
-    //     .ok()?;
-    // let email = id_token.email();
-    // let given_name = id_token.given_name();
-    // let family_name = id_token.family_name();
-    //
-    // let refresh_token = openidconnect::OAuth2TokenResponse::refresh_token(&token);
-    // let expiration = types::Timestamp::now()
-    //     + openidconnect::OAuth2TokenResponse::expires_in(&token).map_or(3600, |d| d.as_secs());
-    //
-    // eprintln!("EMAIL:      {email:?}");
-    // eprintln!("GIVEN:      {given_name:?}");
-    // eprintln!("FAMILY:     {family_name:?}");
-    // eprintln!("TOKEN:      {refresh_token:?}");
-    // eprintln!("EXPIRATION: {expiration:?}");
-    // eprintln!();
-    // eprintln!("TOKEN:      {token:?}");
-    // eprintln!("ID_TOKEN:   {id_token:?}");
+    eprintln!("Exiting");
 
     Ok(Some(state.redirect))
+}
+
+fn decode_jwt(token: &str) -> JwtPayload {
+    let payload = token.split('.').nth(1).unwrap();
+    let payload =
+        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload).unwrap();
+    serde_json::from_slice(&payload).unwrap()
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -217,16 +228,22 @@ struct DiscoveryDocument {
     issuer: url::Url,
     authorization_endpoint: url::Url,
     token_endpoint: url::Url,
-    // TODO
-    // jwks_uri: url::Url,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct JwtPayload {
+    iss: String,
+    email: String,
+    given_name: Option<String>,
+    family_name: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
-struct TokenExchange<'a> {
-    code: &'a str,
-    client_id: &'a str,
-    client_secret: &'a str,
-    callback_uri: url::Url,
+struct TokenExchange {
+    code: String,
+    client_id: String,
+    client_secret: String,
+    redirect_uri: url::Url,
     grant_type: &'static str,
 }
 

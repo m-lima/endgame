@@ -180,14 +180,11 @@ mod auth {
         oidc_id: usize,
         client_id: ngx_str_t,
         client_secret: ngx_str_t,
-        // callback_host: ngx_str_t,
-        // callback_path: ngx_str_t,
         callback_url: ngx_str_t,
     ) -> Error {
         let query = as_str!(query);
         let client_id = as_str!(client_id);
         let client_secret = as_str!(client_secret);
-        // let callback = make_uri!(callback_host, callback_path);
         let callback = attempt!(url callback_url);
         // TODO
         let _ = oidc::exchange_code(
