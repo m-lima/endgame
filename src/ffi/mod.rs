@@ -96,9 +96,9 @@ mod conf {
     }
 }
 
-mod auth {
+mod runtime {
     use super::types::{Error, Key, RustSlice, ngx_str_t};
-    use crate::{dencrypt, oidc::auth as oidc, types};
+    use crate::{dencrypt, types};
 
     macro_rules! bail {
         ($name: ident, $problem: literal) => {
@@ -179,6 +179,8 @@ mod auth {
         redirect_path: ngx_str_t,
         login_url: &mut RustSlice,
     ) -> Error {
+        use crate::oidc::runtime::redirect as oidc;
+
         let client_id = arg!(str client_id);
         let callback_url = arg!(url callback_url);
         let redirect = arg!(url redirect_host, redirect_path);
@@ -188,10 +190,10 @@ mod auth {
                 *login_url = url.to_string().into();
                 Error::none()
             }
-            Err(oidc::RedirectError::MissingConfiguration) => {
+            Err(oidc::Error::MissingConfiguration) => {
                 Error::new(500, "Missing OIDC configuration for redirection")
             }
-            Err(oidc::RedirectError::Encryption) => Error::new(500, "Failed to encrypt state"),
+            Err(oidc::Error::Encryption) => Error::new(500, "Failed to encrypt state"),
         }
     }
 
@@ -204,12 +206,14 @@ mod auth {
         client_secret: ngx_str_t,
         callback_url: ngx_str_t,
     ) -> Error {
+        use crate::oidc::runtime::code as oidc;
+
         let query = arg!(str query);
         let client_id = arg!(str client_id);
         let client_secret = arg!(str client_secret);
         let callback = arg!(url callback_url);
 
-        match oidc::exchange_code(
+        match oidc::exchange(
             query,
             key.bytes,
             oidc_id,
@@ -218,10 +222,10 @@ mod auth {
             callback,
         ) {
             Ok(()) => Error::none(),
-            Err(oidc::ExchangeCodeError::MissingConfiguration) => {
+            Err(oidc::Error::MissingConfiguration) => {
                 Error::new(500, "Missing OIDC configuration for redirection")
             }
-            Err(oidc::ExchangeCodeError::BadQueryParam) => Error::no_msg(400),
+            Err(oidc::Error::BadQueryParam) => Error::no_msg(400),
         }
     }
 

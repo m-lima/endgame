@@ -79,199 +79,223 @@ pub mod config {
     }
 }
 
-pub mod auth {
-    use crate::{dencrypt, types};
+pub mod runtime {
+    pub mod redirect {
+        use crate::{dencrypt, types};
 
-    #[derive(Debug, serde::Serialize)]
-    struct TokenExchange {
-        code: String,
-        client_id: String,
-        client_secret: String,
-        redirect_uri: url::Url,
-        grant_type: &'static str,
-    }
-
-    #[derive(Debug, serde::Deserialize)]
-    struct TokenExchangeResponse {
-        id_token: String,
-        refresh_token: Option<String>,
-    }
-
-    #[derive(Debug, serde::Deserialize)]
-    struct JwtPayload {
-        iss: String,
-        expires_in: u64,
-        nonce: String,
-        email: String,
-        given_name: Option<String>,
-        family_name: Option<String>,
-    }
-
-    struct Requester {
-        client: reqwest::Client,
-        rt: tokio::runtime::Runtime,
-    }
-
-    static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| {
-        let layer = treetrace::Layer::builder(treetrace::Stderr).build();
-        let subscriber =
-            tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), layer);
-        tracing::subscriber::set_global_default(subscriber).unwrap();
-
-        Requester {
-            client: reqwest::ClientBuilder::new()
-                .redirect(openidconnect::reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(60))
-                .build()
-                .expect("Could not create HTTP client"),
-
-            rt: tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(1)
-                .enable_all()
-                .build()
-                .expect("Could not build async runtime"),
+        pub enum Error {
+            MissingConfiguration,
+            Encryption,
         }
-    });
 
-    pub enum RedirectError {
-        MissingConfiguration,
-        Encryption,
+        pub fn get_redirect_login_url(
+            key: crypter::Key,
+            oidc_id: usize,
+            client_id: &str,
+            callback: &url::Url,
+            redirect: url::Url,
+        ) -> Result<url::Url, Error> {
+            let state = {
+                let mut nonce = [0; 32];
+                rand::RngCore::fill_bytes(&mut rand::rng(), &mut nonce);
+                let timestamp = types::Timestamp::now();
+
+                types::State::new(nonce, timestamp, redirect)
+            };
+            let nonce = base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                state.nonce,
+            );
+            let state = dencrypt::encrypt(key, &state).ok_or(Error::Encryption)?;
+
+            let configs = super::super::CONFIGS.borrow();
+            let config = configs.get(oidc_id).ok_or(Error::MissingConfiguration)?;
+
+            let mut url = config.authorization_endpoint.clone();
+            url.query_pairs_mut()
+                .append_pair("client_id", client_id)
+                .append_pair("response_type", "code")
+                .append_pair("scope", "openid email profile")
+                .append_pair("redirect_uri", callback.as_str())
+                .append_pair("state", &state)
+                .append_pair("nonce", &nonce)
+                .append_pair("access_type", "offline");
+
+            Ok(url)
+        }
     }
 
-    pub fn get_redirect_login_url(
-        key: crypter::Key,
-        oidc_id: usize,
-        client_id: &str,
-        callback: &url::Url,
-        redirect: url::Url,
-    ) -> Result<url::Url, RedirectError> {
-        let state = {
-            let mut nonce = [0; 32];
-            rand::RngCore::fill_bytes(&mut rand::rng(), &mut nonce);
-            let timestamp = types::Timestamp::now();
+    pub mod code {
+        use crate::{dencrypt, types};
 
-            types::State::new(nonce, timestamp, redirect)
-        };
-        let nonce = base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            state.nonce,
-        );
-        let state = dencrypt::encrypt(key, &state).ok_or(RedirectError::Encryption)?;
+        struct Requester {
+            client: reqwest::Client,
+            rt: tokio::runtime::Runtime,
+        }
 
-        let configs = super::CONFIGS.borrow();
-        let config = configs
-            .get(oidc_id)
-            .ok_or(RedirectError::MissingConfiguration)?;
+        static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| {
+            let layer = treetrace::Layer::builder(treetrace::Stderr).build();
+            let subscriber = tracing_subscriber::layer::SubscriberExt::with(
+                tracing_subscriber::registry(),
+                layer,
+            );
+            tracing::subscriber::set_global_default(subscriber).unwrap();
 
-        let mut url = config.authorization_endpoint.clone();
-        url.query_pairs_mut()
-            .append_pair("client_id", client_id)
-            .append_pair("response_type", "code")
-            .append_pair("scope", "openid email profile")
-            .append_pair("redirect_uri", callback.as_str())
-            .append_pair("state", &state)
-            .append_pair("nonce", &nonce)
-            .append_pair("access_type", "offline");
+            Requester {
+                client: reqwest::ClientBuilder::new()
+                    .redirect(openidconnect::reqwest::redirect::Policy::none())
+                    .timeout(std::time::Duration::from_secs(60))
+                    .build()
+                    .expect("Could not create HTTP client"),
 
-        Ok(url)
-    }
+                rt: tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(1)
+                    .enable_all()
+                    .build()
+                    .expect("Could not build async runtime"),
+            }
+        });
 
-    pub enum ExchangeCodeError {
-        MissingConfiguration,
-        BadQueryParam,
-        // Request,
-        // Internal,
-        // Unauthorized,
-    }
+        pub enum Error {
+            MissingConfiguration,
+            BadQueryParam,
+        }
 
-    pub fn exchange_code(
-        query: &str,
-        key: crypter::Key,
-        oidc_id: usize,
-        client_id: &str,
-        client_secret: &str,
-        callback: url::Url,
-    ) -> Result<(), ExchangeCodeError> {
-        fn get_param<'q>(query: &'q str, param: &str) -> Option<&'q str> {
-            query
-                .split('&')
-                .filter_map(|p| p.strip_prefix(param))
-                .find_map(|p| {
-                    if p.is_empty() {
-                        Some("")
-                    } else {
-                        p.strip_prefix('=')
+        pub fn exchange(
+            query: &str,
+            key: crypter::Key,
+            oidc_id: usize,
+            client_id: &str,
+            client_secret: &str,
+            callback: url::Url,
+        ) -> Result<(), Error> {
+            fn get_param<'q>(query: &'q str, param: &str) -> Option<&'q str> {
+                query
+                    .split('&')
+                    .filter_map(|p| p.strip_prefix(param))
+                    .find_map(|p| {
+                        if p.is_empty() {
+                            Some("")
+                        } else {
+                            p.strip_prefix('=')
+                        }
+                    })
+            }
+
+            // TODO
+            const FIVE_MINUTES: u64 = 60 * 5 * 100_000;
+
+            let _state = get_param(query, "state")
+                .and_then(|s| dencrypt::decrypt::<types::State>(key, s.as_bytes()))
+                .filter(|s| s.timestamp >= types::Timestamp::now() - FIVE_MINUTES)
+                .ok_or(Error::BadQueryParam)?;
+
+            let code = get_param(query, "code")
+                .map(|c| percent_encoding::percent_decode(c.as_bytes()).collect::<Vec<_>>())
+                .and_then(|c| String::from_utf8(c).ok())
+                .ok_or(Error::BadQueryParam)?;
+
+            let configs = super::super::CONFIGS.borrow();
+            let config = configs.get(oidc_id).ok_or(Error::MissingConfiguration)?;
+
+            let endpoint = config.token_endpoint.clone();
+
+            REQUESTER.rt.spawn(future::exchange(
+                endpoint,
+                code,
+                String::from(client_id),
+                String::from(client_secret),
+                callback,
+            ));
+
+            Ok(())
+        }
+
+        mod future {
+            #[derive(Debug, serde::Serialize)]
+            struct Request {
+                code: String,
+                client_id: String,
+                client_secret: String,
+                redirect_uri: url::Url,
+                grant_type: &'static str,
+            }
+
+            #[derive(Debug, serde::Deserialize)]
+            struct Response {
+                id_token: String,
+                refresh_token: Option<String>,
+            }
+
+            #[derive(Debug, serde::Deserialize)]
+            struct Jwt {
+                iss: String,
+                expires_in: u64,
+                nonce: String,
+                email: String,
+                given_name: Option<String>,
+                family_name: Option<String>,
+            }
+
+            pub async fn exchange(
+                endpoint: url::Url,
+                code: String,
+                client_id: String,
+                client_secret: String,
+                redirect_uri: url::Url,
+            ) {
+                let payload = Request {
+                    code,
+                    client_id,
+                    client_secret,
+                    redirect_uri,
+                    grant_type: "authorization_code",
+                };
+
+                tracing::info!(token = ?payload, "Will exchange token");
+                let response = match super::REQUESTER
+                    .client
+                    .post(endpoint)
+                    .form(&payload)
+                    .send()
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(error) => {
+                        tracing::error!(?error, "Failed to call endpoint");
+                        todo!()
+                        // return Err(error.into());
                     }
-                })
-        }
-
-        // TODO
-        const FIVE_MINUTES: u64 = 60 * 5 * 100_000;
-
-        let state = get_param(query, "state")
-            .and_then(|s| dencrypt::decrypt::<types::State>(key, s.as_bytes()))
-            .filter(|s| s.timestamp >= types::Timestamp::now() - FIVE_MINUTES)
-            .ok_or(ExchangeCodeError::BadQueryParam)?;
-
-        let code = get_param(query, "code")
-            .map(|c| percent_encoding::percent_decode(c.as_bytes()).collect::<Vec<_>>())
-            .and_then(|c| String::from_utf8(c).ok())
-            .ok_or(ExchangeCodeError::BadQueryParam)?;
-
-        let configs = super::CONFIGS.borrow();
-        let config = configs
-            .get(oidc_id)
-            .ok_or(ExchangeCodeError::MissingConfiguration)?;
-
-        let payload = TokenExchange {
-            code,
-            client_id: String::from(client_id),
-            client_secret: String::from(client_secret),
-            redirect_uri: callback,
-            grant_type: "authorization_code",
-        };
-        let endpoint = config.token_endpoint.clone();
-
-        REQUESTER.rt.spawn(exchange_code_request(endpoint, payload));
-
-        Ok(())
-    }
-
-    async fn exchange_code_request(endpoint: url::Url, payload: TokenExchange) {
-        tracing::info!(token = ?payload, "Will exchange token");
-        let response = match REQUESTER.client.post(endpoint).form(&payload).send().await {
-            Ok(r) => r,
-            Err(error) => {
-                tracing::error!(?error, "Failed to call endpoint");
-                todo!()
-                // return Err(error.into());
+                };
+                let body = match response.bytes().await {
+                    Ok(r) => r,
+                    Err(error) => {
+                        tracing::error!(?error, "Failed to get bytes");
+                        todo!()
+                        // return Err(error.into());
+                    }
+                };
+                let token = match serde_json::from_slice::<Response>(&body) {
+                    Ok(r) => r,
+                    Err(error) => {
+                        tracing::error!(?error, "Failed to parse");
+                        tracing::warn!(body = %String::from_utf8_lossy(&body), "Original body");
+                        todo!()
+                        // return Err(error.into());
+                    }
+                };
+                tracing::info!("Exchanged token: {token:?}");
             }
-        };
-        let body = match response.bytes().await {
-            Ok(r) => r,
-            Err(error) => {
-                tracing::error!(?error, "Failed to get bytes");
-                todo!()
-                // return Err(error.into());
-            }
-        };
-        let token = match serde_json::from_slice::<TokenExchangeResponse>(&body) {
-            Ok(r) => r,
-            Err(error) => {
-                tracing::error!(?error, "Failed to parse");
-                tracing::warn!(body = %String::from_utf8_lossy(&body), "Original body");
-                todo!()
-                // return Err(error.into());
-            }
-        };
-        tracing::info!("Exchanged token: {token:?}");
-    }
 
-    fn decode_jwt(token: &str) -> JwtPayload {
-        let payload = token.split('.').nth(1).unwrap();
-        let payload =
-            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload)
+            fn decode_jwt(token: &str) -> Jwt {
+                let payload = token.split('.').nth(1).unwrap();
+                let payload = base64::Engine::decode(
+                    &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                    payload,
+                )
                 .unwrap();
-        serde_json::from_slice(&payload).unwrap()
+                serde_json::from_slice(&payload).unwrap()
+            }
+        }
     }
 }
