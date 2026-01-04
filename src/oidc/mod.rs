@@ -46,6 +46,7 @@ pub mod config {
             return Ok(idx);
         }
 
+        // TODO: Have a single runtime instead of one per worker
         let body = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
