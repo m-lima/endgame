@@ -103,12 +103,12 @@ impl io::In for Token {
 pub struct State {
     pub nonce: [u8; 32],
     pub timestamp: Timestamp,
-    pub redirect: openidconnect::url::Url,
+    pub redirect: url::Url,
 }
 
 impl State {
     #[must_use]
-    pub fn new(nonce: [u8; 32], timestamp: Timestamp, redirect: openidconnect::url::Url) -> Self {
+    pub fn new(nonce: [u8; 32], timestamp: Timestamp, redirect: url::Url) -> Self {
         Self {
             nonce,
             timestamp,
@@ -134,7 +134,7 @@ impl io::In for State {
         let nonce = <[u8; 32]>::read(reader)?;
         let timestamp = Timestamp::read(reader)?;
         let redirect = Option::read(reader)?
-            .and_then(|ref u| openidconnect::url::Url::parse(u).ok())
+            .and_then(|ref u| url::Url::parse(u).ok())
             .ok_or(std::io::ErrorKind::InvalidData)?;
 
         Ok(Self {

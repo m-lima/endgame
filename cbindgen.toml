@@ -9,3 +9,4 @@ usize_is_size_t = true
 
 [export]
 exclude = ["ngx_str_t"]
+include = ["Token"]

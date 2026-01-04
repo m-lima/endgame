@@ -41,6 +41,8 @@
         };
         nginx = pkgs.nginx.override {
           modules = [ module ];
+          # TODO
+          withDebug = true;
         };
         nginx-src = pkgs.stdenvNoCC.mkDerivation {
           name = "${nginx.name}-src";
@@ -67,6 +69,9 @@
             echo -n 'nobody:x:65534:65534:nobody:/:/sbin/nologin' > /etc/passwd
             echo -n 'nogroup:x:65533:\n' > /etc/group
           '';
+          copyToRoot = [
+            pkgs.cacert
+          ];
           config = {
             Cmd = [
               "${nginx}/bin/nginx"
@@ -83,12 +88,14 @@
                     '- $remote_addr $request_method $request_uri ''${request_length}b '
                     '- $status ''${bytes_sent}b ''${request_time}s '
                     '- $http_user_agent';
-                  access_log syslog:server=unix:/dev/log main;
+                  access_log stderr main;
+                  # TODO
+                  error_log stderr debug;
 
                   server {
                     endgame on;
-                    endgame_session_key raw MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=;
-                    endgame_discovery_url https://accounts.google.com;
+                    endgame_key raw MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=;
+                    endgame_discovery_url https://accounts.google.com/;
                     endgame_client_id client;
                     endgame_client_secret secret;
                     endgame_callback_url http://localhost/callback;
@@ -103,7 +110,7 @@
                     location /on {
                       endgame on;
                       endgame_auto_login on;
-                      endgame_session_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
+                      endgame_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
                     }
 
                     location /off {
@@ -126,8 +133,12 @@
         };
         rust =
           (helper.lib.rust.helper inputs system ./. {
+            # TODO
+            mega = false;
             binary = false;
             bindgen = true;
+            buildInputs = pkgs: [ pkgs.openssl ];
+            nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
             devPackages =
               let
                 policy = pkgs.writeText "policy.json" ''{ "default": [ { "type": "insecureAcceptAnything" } ] }'';
@@ -137,7 +148,11 @@
                 (pkgs.writeShellScriptBin "podman-build-nix" "podman build --signature-policy ${policy} $@")
                 (pkgs.writeShellScriptBin "podman-load-nix" "podman load --signature-policy ${policy} $@")
               ];
-            overrides.commonArgs.C_INCLUDE_PATH = "${nginx-src}:${./include}";
+            overrides.commonArgs = {
+              C_INCLUDE_PATH = "${nginx-src}:${./include}";
+              # TODO
+              CARGO_PROFILE = "dev";
+            };
           }).outputs;
       in
       rust

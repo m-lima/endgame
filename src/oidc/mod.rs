@@ -18,9 +18,12 @@ pub mod config {
 
     pub fn discover(discovery_url: &str) -> Result<usize, Error> {
         macro_rules! bad_request {
-            () => {
-                |e| Error::Request(Box::new(e))
-            };
+            ($msg: literal) => {{
+                |e| {
+                    eprintln!(concat!($msg, ": {:?}"), e);
+                    Error::Request(Box::new(e))
+                }
+            }};
         }
 
         const DISCOVERY_SUFFIX: &str = "/.well-known/openid-configuration";
@@ -47,25 +50,24 @@ pub mod config {
         }
 
         // TODO: Have a single runtime instead of one per worker
-        let body = tokio::runtime::Builder::new_current_thread()
+        let config = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(bad_request!())?
+            .map_err(bad_request!("tokio"))?
             .block_on(async {
-                let response = reqwest::ClientBuilder::new()
+                reqwest::ClientBuilder::new()
                     .timeout(std::time::Duration::from_secs(60))
                     .build()
-                    .map_err(bad_request!())?
+                    .map_err(bad_request!("build"))?
                     .get(discovery_url)
                     .send()
                     .await
-                    .map_err(bad_request!())?;
-                let body = response.bytes().await.map_err(bad_request!())?;
-                Result::Ok(body)
+                    .map_err(bad_request!("send"))?
+                    .json::<super::DiscoveryDocument>()
+                    .await
+                    .map_err(bad_request!("send"))
             })?;
 
-        let config =
-            serde_json::from_slice::<super::DiscoveryDocument>(&body).map_err(bad_request!())?;
         if config.issuer != issuer {
             return Err(Error::BadIssuer(
                 config.issuer.to_string(),
@@ -164,7 +166,7 @@ pub mod runtime {
 
         pub use future::Error as FutureError;
 
-        pub fn exchange<F: 'static + Send + FnOnce(Result<types::Token, future::Error>)>(
+        pub fn exchange<F: 'static + Send + FnOnce(Result<String, future::Error>)>(
             query: &str,
             key: crypter::Key,
             oidc_id: usize,
@@ -206,6 +208,7 @@ pub mod runtime {
             let issuer = config.issuer.clone();
 
             REQUESTER.rt.spawn(future::exchange(
+                key,
                 endpoint,
                 code,
                 String::from(client_id),
@@ -220,7 +223,7 @@ pub mod runtime {
         }
 
         mod future {
-            use super::types;
+            use super::{dencrypt, types};
 
             #[derive(Debug, serde::Serialize)]
             struct Request {
@@ -246,7 +249,8 @@ pub mod runtime {
                 family_name: Option<String>,
             }
 
-            pub async fn exchange<F: FnOnce(Result<types::Token, Error>)>(
+            pub async fn exchange<F: FnOnce(Result<String, Error>)>(
+                key: crypter::Key,
                 endpoint: url::Url,
                 code: String,
                 client_id: String,
@@ -264,21 +268,23 @@ pub mod runtime {
                     grant_type: "authorization_code",
                 };
 
-                finalizer(exchange_fallible(endpoint, request, nonce, issuer).await);
+                finalizer(exchange_fallible(key, endpoint, request, nonce, issuer).await);
             }
 
             pub enum Error {
                 Request(reqwest::Error),
                 Jwt(serde_json::Error),
                 Validation(String),
+                Encryption,
             }
 
             async fn exchange_fallible(
+                key: crypter::Key,
                 endpoint: url::Url,
                 request: Request,
                 nonce: [u8; 32],
                 issuer: url::Url,
-            ) -> Result<types::Token, Error> {
+            ) -> Result<String, Error> {
                 let response = super::REQUESTER
                     .client
                     .post(endpoint)
@@ -312,12 +318,13 @@ pub mod runtime {
                 } else if jwt.email.trim().is_empty() {
                     Err(Error::Validation(String::from("Email is empty")))
                 } else {
-                    Ok(types::Token {
+                    let token = types::Token {
                         timestamp: types::Timestamp::now(),
                         email: jwt.email,
                         given_name: jwt.given_name,
                         family_name: jwt.family_name,
-                    })
+                    };
+                    dencrypt::encrypt(key, &token).ok_or(Error::Encryption)
                 }
             }
 

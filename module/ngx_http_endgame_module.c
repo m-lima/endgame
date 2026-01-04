@@ -251,7 +251,7 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
   ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Args: '%V'", &r->args);
   Error error = endgame_auth_exchange_token(
       r->args, egcf->key, egcf->oidc_id, egcf->client_id, egcf->client_secret,
-      egcf->callback_url);
+      egcf->callback_url, r, /* TODO */ 0);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to get auth url: '%V'", &error.msg);
@@ -260,7 +260,7 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
     return error.status;
   }
 
-  return NGX_HTTP_INSUFFICIENT_STORAGE;
+  return NGX_DONE;
 }
 
 static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,

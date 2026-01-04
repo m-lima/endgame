@@ -214,26 +214,15 @@ mod runtime {
         use crate::oidc::runtime::code as oidc;
 
         let request = request as usize;
-        let finalizer = move |result: Result<types::Token, oidc::FutureError>| {
+        let finalizer = move |result: Result<String, oidc::FutureError>| {
             let request = request as _;
             let payload = match result {
-                Ok(token) => {
-                    if let Some(cookie) = dencrypt::encrypt(key.bytes, &token) {
-                        super::types::Token {
-                            request,
-                            status: 0,
-                            error: ngx_str_t::none(),
-                            email: token.email.into(),
-                            given_name: token.given_name.map_or(RustSlice::none(), RustSlice::from),
-                            family_name: token
-                                .family_name
-                                .map_or(RustSlice::none(), RustSlice::from),
-                            cookie: cookie.into(),
-                        }
-                    } else {
-                        todo!()
-                    }
-                }
+                Ok(cookie) => super::types::Token {
+                    request,
+                    status: 0,
+                    error: ngx_str_t::none(),
+                    cookie: cookie.into(),
+                },
                 Err(err) => {
                     let error = match err {
                         oidc::FutureError::Request(error) => {
@@ -248,14 +237,14 @@ mod runtime {
                             log_err!("JWT validation failed", error);
                             Error::new(401, "JWT validation failed")
                         }
+                        oidc::FutureError::Encryption => {
+                            Error::new(500, "Failed to encrypt cookie")
+                        }
                     };
                     super::types::Token {
                         request,
                         status: error.status,
                         error: error.msg,
-                        email: RustSlice::none(),
-                        given_name: RustSlice::none(),
-                        family_name: RustSlice::none(),
                         cookie: RustSlice::none(),
                     }
                 }

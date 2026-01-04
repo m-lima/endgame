@@ -145,22 +145,5 @@ pub struct Token {
     pub request: *const libc::c_void,
     pub status: u16,
     pub error: ngx_str_t,
-    pub email: RustSlice,
-    pub given_name: RustSlice,
-    pub family_name: RustSlice,
     pub cookie: RustSlice,
-}
-
-impl Token {
-    pub fn ok(request: *const libc::c_void, token: crate::types::Token, cookie: String) -> Self {
-        Self {
-            request,
-            status: 0,
-            error: ngx_str_t::none(),
-            email: token.email.into(),
-            given_name: token.given_name.map_or(RustSlice::none(), RustSlice::from),
-            family_name: token.family_name.map_or(RustSlice::none(), RustSlice::from),
-            cookie: cookie.into(),
-        }
-    }
 }
