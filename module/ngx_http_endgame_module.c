@@ -299,13 +299,14 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
 
 static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
   Token result;
-  ssize_t n, b;
+  ssize_t n;
+  size_t b;
 
   for (;;) {
     b = 0;
     for (;;) {
-      n = read(ngx_http_endgame_pipe[0], ((uint8_t *)&result) + n,
-               sizeof(Token) - n);
+      n = read(ngx_http_endgame_pipe[0], ((uint8_t *)&result) + b,
+               sizeof(Token) - b);
 
       if (n == -1) {
         if (ngx_errno == NGX_EAGAIN) {
