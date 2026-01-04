@@ -11,6 +11,7 @@ atomic_refcell = "0.1.13"
 base64 = "0.22.1"
 # TODO: Use from crates
 crypter = { git = "https://github.com/m-lima/crypter", branch = "master" }
+libc = "0.2.179"
 # TODO: Remove
 openidconnect = { version = "4.0.1", features = ["reqwest-blocking"] }
 percent-encoding = "2.3.2"

@@ -100,24 +100,27 @@ impl From<String> for RustSlice {
 #[derive(Copy, Clone, Debug)]
 pub struct Error {
     pub status: u16,
-    pub len: usize,
-    pub data: *const u8,
+    pub msg: ngx_str_t,
 }
 
 impl Error {
     pub const fn new(status: u16, msg: &'static str) -> Self {
         Self {
             status,
-            len: msg.len(),
-            data: msg.as_ptr(),
+            msg: ngx_str_t {
+                len: msg.len(),
+                data: msg.as_ptr().cast_mut(),
+            },
         }
     }
 
     pub const fn no_msg(status: u16) -> Self {
         Self {
             status,
-            len: 0,
-            data: std::ptr::null(),
+            msg: ngx_str_t {
+                len: 0,
+                data: std::ptr::null_mut(),
+            },
         }
     }
 

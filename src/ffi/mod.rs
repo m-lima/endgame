@@ -12,7 +12,7 @@ mod conf {
 
     macro_rules! bail {
         ($err: literal) => {
-            return $err.as_ptr()
+            return $err.as_ptr().cast_mut()
         };
         ($err: literal, $msg: literal, $reason: expr) => {{
             log_err!($msg, $reason);
@@ -37,10 +37,10 @@ mod conf {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_conf_load_key(path: ngx_str_t, key: &mut Key) -> *const i8 {
+    pub extern "C" fn endgame_conf_load_key(path: ngx_str_t, key: &mut Key) -> *mut libc::c_char {
         let path = std::path::PathBuf::from(as_str!(path));
         if !path.exists() {
-            return c"does not exist".as_ptr();
+            bail!(c"does not exist");
         }
 
         let mut file = match std::fs::File::open(path) {
@@ -58,7 +58,7 @@ mod conf {
         }
 
         match std::io::Read::read(&mut file, &mut [0; 1]) {
-            Ok(0) => std::ptr::null(),
+            Ok(0) => std::ptr::null_mut(),
             Ok(_) => bail!(c"is too large. Need 32 bytes"),
             Err(e) => bail!(c"is unreadable", "Could not read file", e),
         }
@@ -68,13 +68,13 @@ mod conf {
     pub extern "C" fn endgame_conf_oidc_discover(
         discovery_url: ngx_str_t,
         oidc_id: &mut usize,
-    ) -> *const i8 {
+    ) -> *mut libc::c_char {
         let discovery_url = as_str!(discovery_url);
 
         match oidc::discover(discovery_url) {
             Ok(id) => {
                 *oidc_id = id;
-                std::ptr::null()
+                std::ptr::null_mut()
             }
             Err(oidc::Error::BadUrl(err)) => {
                 bail!(c"is not a valid URL", "Could not parse the URL", err)
@@ -143,7 +143,7 @@ mod runtime {
             let value = arg!(bytes $value);
             let value = attempt!(ok str::from_utf8(value), $value, "not valid UTF-8");
             let value = value.trim();
-            attempt!(if value.is_empty(), $value, "empty");
+            attempt!(if !value.is_empty(), $value, "empty");
             value
         }};
         (url $value: ident) => {

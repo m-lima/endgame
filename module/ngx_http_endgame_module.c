@@ -216,9 +216,9 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
 
   Error error = endgame_token_decrypt(egcf->key, value, egcf->session_ttl,
                                       &email, &given, &family);
-  if (error.data != NULL) {
+  if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to decrypt cookie: '%V'", &error);
+                  "failed to decrypt cookie: '%V'", &error.msg);
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
   }
 
@@ -261,10 +261,12 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
   Error error = endgame_auth_exchange_token(
       r->args, egcf->key, egcf->oidc_id, egcf->client_id, egcf->client_secret,
       egcf->callback_url);
-  if (error.data != NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to get auth url: '%V'", &error);
-    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  if (error.status != NGX_OK) {
+    if (error.msg.data != NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "failed to get auth url: '%V'", &error.msg);
+    }
+    return error.status;
   }
   return NGX_HTTP_INSUFFICIENT_STORAGE;
 }
@@ -397,10 +399,12 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
       egcf->key, egcf->oidc_id, egcf->client_id, egcf->callback_url,
       r->headers_in.host->value, r->unparsed_uri, &location);
 
-  if (error.data != NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to get auth url: '%V'", &error);
-    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  if (error.status != NGX_OK) {
+    if (error.msg.data != NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "failed to get auth url: '%V'", &error.msg);
+    }
+    return error.status;
   }
 
   ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
@@ -571,13 +575,10 @@ static char *ngx_http_endgame_conf_set_key(ngx_conf_t *cf, ngx_command_t *cmd,
     egcf->key_set = 1;
   } else if (ngx_http_endgame_ngx_str_t_eq(*kind,
                                            (ngx_str_t)ngx_string("file"))) {
-    Error error = endgame_conf_load_key(*value, &egcf->key);
-    if (error.data != NULL) {
-      ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to load key: '%V'",
-                    &error);
-      return "does not point to a valid key";
+    char *error = endgame_conf_load_key(*value, &egcf->key);
+    if (error != NULL) {
+      return error;
     }
-
   } else {
     ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", kind);
     return "should be 'raw' or 'file'";
@@ -599,11 +600,9 @@ static char *ngx_http_endgame_conf_set_discovery_url(ngx_conf_t *cf,
   ngx_str_t *arg = cf->args->elts;
   arg += 1;
 
-  Error error = endgame_conf_oidc_discover(*arg, &egcf->oidc_id);
-  if (error.data != NULL) {
-    ngx_log_error(NGX_LOG_ERR, cf->log, 0,
-                  "failed to discover OIDC configuration: '%V'", &error);
-    return "could not resolve to an OIDC configuration";
+  char *error = endgame_conf_oidc_discover(*arg, &egcf->oidc_id);
+  if (error != NULL) {
+    return error;
   }
 
   if (egcf->oidc_id == UNUSED_ID) {

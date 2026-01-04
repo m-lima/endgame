@@ -9,14 +9,14 @@ typedef struct RustSlice {
   size_t cap;
 } RustSlice;
 
-typedef struct Error {
-  size_t len;
-  const uint8_t *data;
-} Error;
-
 typedef struct Key {
   uint8_t bytes[32];
 } Key;
+
+typedef struct Error {
+  uint16_t status;
+  ngx_str_t msg;
+} Error;
 
 void endgame_ngx_str_t_trim(ngx_str_t *string);
 
@@ -24,9 +24,9 @@ struct RustSlice endgame_rust_slice_null(void);
 
 void endgame_rust_slice_free(struct RustSlice *self);
 
-struct Error endgame_conf_load_key(ngx_str_t path, struct Key *key);
+char *endgame_conf_load_key(ngx_str_t path, struct Key *key);
 
-struct Error endgame_conf_oidc_discover(ngx_str_t discovery_url, size_t *oidc_id);
+char *endgame_conf_oidc_discover(ngx_str_t discovery_url, size_t *oidc_id);
 
 struct Error endgame_auth_redirect_login_url(struct Key key,
                                              size_t oidc_id,
@@ -34,7 +34,7 @@ struct Error endgame_auth_redirect_login_url(struct Key key,
                                              ngx_str_t callback_url,
                                              ngx_str_t redirect_host,
                                              ngx_str_t redirect_path,
-                                             struct RustSlice *auth_url);
+                                             struct RustSlice *login_url);
 
 struct Error endgame_auth_exchange_token(ngx_str_t query,
                                          struct Key key,
