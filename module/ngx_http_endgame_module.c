@@ -6,6 +6,7 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <unistd.h>
 
 enum ngx_http_endgame_mode_e;
 typedef enum ngx_http_endgame_mode_e ngx_http_endgame_mode_t;
@@ -13,9 +14,11 @@ struct ngx_http_endgame_conf_s;
 typedef struct ngx_http_endgame_conf_s ngx_http_endgame_conf_t;
 
 static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf);
+static ngx_int_t ngx_http_endgame_init_process(ngx_cycle_t *cycle);
 static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
                                            ngx_http_endgame_conf_t *egcf);
+static void ngx_http_endgame_finalizer(ngx_event_t *ev);
 static void *ngx_http_endgame_create_conf(ngx_conf_t *cf);
 static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
                                          void *child);
@@ -48,6 +51,9 @@ static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
                                              RustSlice header_value);
 static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
                                                   RustSlice *slice);
+
+static int ngx_http_endgame_pipe[2];
+static ngx_connection_t *ngx_http_endgame_dummy_conn = NULL;
 
 enum ngx_http_endgame_mode_e {
   UNSET = -1,
@@ -149,16 +155,16 @@ static ngx_http_module_t ngx_http_endgame_module_ctx = {
 
 ngx_module_t ngx_http_endgame_module = {
     NGX_MODULE_V1,
-    &ngx_http_endgame_module_ctx, /* module context */
-    ngx_http_endgame_commands,    /* module directives */
-    NGX_HTTP_MODULE,              /* module type */
-    NULL,                         /* init master */
-    NULL,                         /* init module */
-    NULL,                         /* init process */
-    NULL,                         /* init thread */
-    NULL,                         /* exit thread */
-    NULL,                         /* exit process */
-    NULL,                         /* exit master */
+    &ngx_http_endgame_module_ctx,  /* module context */
+    ngx_http_endgame_commands,     /* module directives */
+    NGX_HTTP_MODULE,               /* module type */
+    NULL,                          /* init master */
+    NULL,                          /* init module */
+    ngx_http_endgame_init_process, /* init process */
+    NULL,                          /* init thread */
+    NULL,                          /* exit thread */
+    NULL,                          /* exit process */
+    NULL,                          /* exit master */
     NGX_MODULE_V1_PADDING};
 
 static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf) {
@@ -172,6 +178,34 @@ static ngx_int_t ngx_http_endgame_init(ngx_conf_t *cf) {
   }
 
   *h = ngx_http_endgame_handler;
+
+  return NGX_OK;
+}
+
+static ngx_int_t ngx_http_endgame_init_process(ngx_cycle_t *cycle) {
+  if (pipe(ngx_http_endgame_pipe) == -1) {
+    return NGX_ERROR;
+  }
+
+  // Set non-blocking on the read end
+  ngx_nonblocking(ngx_http_endgame_pipe[0]);
+
+  // Create dummy connection for the Event Loop
+  ngx_http_endgame_dummy_conn =
+      ngx_get_connection(ngx_http_endgame_pipe[0], cycle->log);
+  if (ngx_http_endgame_dummy_conn == NULL)
+    return NGX_ERROR;
+
+  ngx_http_endgame_dummy_conn->data = NULL;
+
+  ngx_event_t *rev = ngx_http_endgame_dummy_conn->read;
+  rev->handler = ngx_http_endgame_finalizer;
+  rev->log = cycle->log;
+
+  // Add read-end of pipe to epoll/kqueue
+  if (ngx_add_event(rev, NGX_READ_EVENT, 0) == NGX_ERROR) {
+    return NGX_ERROR;
+  }
 
   return NGX_OK;
 }
@@ -261,6 +295,59 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
   }
 
   return NGX_DONE;
+}
+
+static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
+  Token result;
+  ssize_t n, b;
+
+  for (;;) {
+    b = 0;
+    for (;;) {
+      n = read(ngx_http_endgame_pipe[0], ((uint8_t *)&result) + n,
+               sizeof(Token) - n);
+
+      if (n == -1) {
+        if (ngx_errno == NGX_EAGAIN) {
+          return;
+        }
+      }
+
+      b += n;
+
+      if (b < sizeof(Token)) {
+        continue;
+      } else if (b == sizeof(Token)) {
+        break;
+      } else {
+        // TODO: Too much read
+      }
+    }
+
+    ngx_http_request_t *r = (ngx_http_request_t *)&result.request;
+
+    if (result.error.data != NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "failed to exchange token: '%V'", &result.error);
+    }
+
+    if (result.status != NGX_OK) {
+      ngx_http_finalize_request(r, result.status);
+      continue;
+    }
+
+    ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
+    if (loc == NULL) {
+      ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+    }
+
+    // TODO: Grab redirect
+    // TODO: Configure cookie
+    loc->hash = 1;
+    ngx_str_set(&loc->key, "Location");
+    loc->value = ngx_http_endgame_take_rust_slice(r->pool, &result.cookie);
+    ngx_http_finalize_request(r, NGX_HTTP_MOVED_TEMPORARILY);
+  }
 }
 
 static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
