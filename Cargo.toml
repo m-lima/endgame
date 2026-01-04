@@ -14,14 +14,14 @@ crypter = { git = "https://github.com/m-lima/crypter", branch = "master" }
 libc = "0.2.179"
 percent-encoding = "2.3.2"
 rand = "0.9.2"
-reqwest = { version = "0.12.28", default-features = false, features = ["json"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["default-tls", "json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.148"
 tokio = { version = "1.48.0", features = ["rt-multi-thread"] }
-# TODO: Remode
+# TODO: Remove
 tracing = { version = "0.1.44", default-features = false }
-# TODO: Remode
+# TODO: Remove
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["registry"] }
-# TODO: Remode
+# TODO: Remove
 treetrace = "0.1.1"
 url = { version = "2.5.7", default-features = false }
