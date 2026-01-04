@@ -208,7 +208,9 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);
-    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+  if (error.status != NGX_OK) {
+    return error.status;
   }
 
   if (email.ptr == NULL || email.len == 0) {
@@ -250,13 +252,14 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
   Error error = endgame_auth_exchange_token(
       r->args, egcf->key, egcf->oidc_id, egcf->client_id, egcf->client_secret,
       egcf->callback_url);
+  if (error.msg.data != NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "failed to get auth url: '%V'", &error.msg);
+  }
   if (error.status != NGX_OK) {
-    if (error.msg.data != NULL) {
-      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "failed to get auth url: '%V'", &error.msg);
-    }
     return error.status;
   }
+
   return NGX_HTTP_INSUFFICIENT_STORAGE;
 }
 
@@ -387,12 +390,11 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
   Error error = endgame_auth_redirect_login_url(
       egcf->key, egcf->oidc_id, egcf->client_id, egcf->callback_url,
       r->headers_in.host->value, r->unparsed_uri, &location);
-
+  if (error.msg.data != NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "failed to get auth url: '%V'", &error.msg);
+  }
   if (error.status != NGX_OK) {
-    if (error.msg.data != NULL) {
-      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "failed to get auth url: '%V'", &error.msg);
-    }
     return error.status;
   }
 
