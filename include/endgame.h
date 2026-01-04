@@ -41,7 +41,9 @@ struct Error endgame_auth_exchange_token(ngx_str_t query,
                                          size_t oidc_id,
                                          ngx_str_t client_id,
                                          ngx_str_t client_secret,
-                                         ngx_str_t callback_url);
+                                         ngx_str_t callback_url,
+                                         const void *request,
+                                         int pipe);
 
 struct Error endgame_token_decrypt(struct Key key,
                                    ngx_str_t src,

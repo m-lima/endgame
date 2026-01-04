@@ -144,7 +144,7 @@ pub mod runtime {
 
             Requester {
                 client: reqwest::ClientBuilder::new()
-                    .redirect(openidconnect::reqwest::redirect::Policy::none())
+                    .redirect(reqwest::redirect::Policy::none())
                     .timeout(std::time::Duration::from_secs(60))
                     .build()
                     .expect("Could not create HTTP client"),
@@ -162,13 +162,16 @@ pub mod runtime {
             BadQueryParam,
         }
 
-        pub fn exchange(
+        pub use future::Error as FutureError;
+
+        pub fn exchange<F: 'static + Send + FnOnce(Result<types::Token, future::Error>)>(
             query: &str,
             key: crypter::Key,
             oidc_id: usize,
             client_id: &str,
             client_secret: &str,
             callback: url::Url,
+            finalizer: F,
         ) -> Result<(), Error> {
             fn get_param<'q>(query: &'q str, param: &str) -> Option<&'q str> {
                 query
@@ -186,7 +189,7 @@ pub mod runtime {
             // TODO
             const FIVE_MINUTES: u64 = 60 * 5 * 100_000;
 
-            let _state = get_param(query, "state")
+            let state = get_param(query, "state")
                 .and_then(|s| dencrypt::decrypt::<types::State>(key, s.as_bytes()))
                 .filter(|s| s.timestamp >= types::Timestamp::now() - FIVE_MINUTES)
                 .ok_or(Error::BadQueryParam)?;
@@ -200,6 +203,7 @@ pub mod runtime {
             let config = configs.get(oidc_id).ok_or(Error::MissingConfiguration)?;
 
             let endpoint = config.token_endpoint.clone();
+            let issuer = config.issuer.clone();
 
             REQUESTER.rt.spawn(future::exchange(
                 endpoint,
@@ -207,12 +211,17 @@ pub mod runtime {
                 String::from(client_id),
                 String::from(client_secret),
                 callback,
+                state.nonce,
+                issuer,
+                finalizer,
             ));
 
             Ok(())
         }
 
         mod future {
+            use super::types;
+
             #[derive(Debug, serde::Serialize)]
             struct Request {
                 code: String,
@@ -230,22 +239,24 @@ pub mod runtime {
 
             #[derive(Debug, serde::Deserialize)]
             struct Jwt {
-                iss: String,
-                expires_in: u64,
+                iss: url::Url,
                 nonce: String,
                 email: String,
                 given_name: Option<String>,
                 family_name: Option<String>,
             }
 
-            pub async fn exchange(
+            pub async fn exchange<F: FnOnce(Result<types::Token, Error>)>(
                 endpoint: url::Url,
                 code: String,
                 client_id: String,
                 client_secret: String,
                 redirect_uri: url::Url,
+                nonce: [u8; 32],
+                issuer: url::Url,
+                finalizer: F,
             ) {
-                let payload = Request {
+                let request = Request {
                     code,
                     client_id,
                     client_secret,
@@ -253,49 +264,73 @@ pub mod runtime {
                     grant_type: "authorization_code",
                 };
 
-                tracing::info!(token = ?payload, "Will exchange token");
-                let response = match super::REQUESTER
-                    .client
-                    .post(endpoint)
-                    .form(&payload)
-                    .send()
-                    .await
-                {
-                    Ok(r) => r,
-                    Err(error) => {
-                        tracing::error!(?error, "Failed to call endpoint");
-                        todo!()
-                        // return Err(error.into());
-                    }
-                };
-                let body = match response.bytes().await {
-                    Ok(r) => r,
-                    Err(error) => {
-                        tracing::error!(?error, "Failed to get bytes");
-                        todo!()
-                        // return Err(error.into());
-                    }
-                };
-                let token = match serde_json::from_slice::<Response>(&body) {
-                    Ok(r) => r,
-                    Err(error) => {
-                        tracing::error!(?error, "Failed to parse");
-                        tracing::warn!(body = %String::from_utf8_lossy(&body), "Original body");
-                        todo!()
-                        // return Err(error.into());
-                    }
-                };
-                tracing::info!("Exchanged token: {token:?}");
+                finalizer(exchange_fallible(endpoint, request, nonce, issuer).await);
             }
 
-            fn decode_jwt(token: &str) -> Jwt {
-                let payload = token.split('.').nth(1).unwrap();
+            pub enum Error {
+                Request(reqwest::Error),
+                Jwt(serde_json::Error),
+                Validation(String),
+            }
+
+            async fn exchange_fallible(
+                endpoint: url::Url,
+                request: Request,
+                nonce: [u8; 32],
+                issuer: url::Url,
+            ) -> Result<types::Token, Error> {
+                let response = super::REQUESTER
+                    .client
+                    .post(endpoint)
+                    .form(&request)
+                    .send()
+                    .await
+                    .map_err(Error::Request)?
+                    .error_for_status()
+                    .map_err(Error::Request)?
+                    .json::<Response>()
+                    .await
+                    .map_err(Error::Request)?;
+
+                let jwt = decode_jwt(&response.id_token)?;
+
+                let nonce = base64::Engine::encode(
+                    &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                    nonce,
+                );
+
+                if jwt.iss != issuer {
+                    Err(Error::Validation(format!(
+                        "Issuer does not match: '{}' != '{}'",
+                        jwt.iss, issuer
+                    )))
+                } else if jwt.nonce != nonce {
+                    Err(Error::Validation(format!(
+                        "Nonce does not match: '{}' != '{}'",
+                        jwt.nonce, nonce,
+                    )))
+                } else if jwt.email.trim().is_empty() {
+                    Err(Error::Validation(String::from("Email is empty")))
+                } else {
+                    Ok(types::Token {
+                        timestamp: types::Timestamp::now(),
+                        email: jwt.email,
+                        given_name: jwt.given_name,
+                        family_name: jwt.family_name,
+                    })
+                }
+            }
+
+            fn decode_jwt(token: &str) -> Result<Jwt, Error> {
+                let payload = token.split('.').nth(1).ok_or_else(|| {
+                    Error::Jwt(serde::de::Error::custom("JWT token missing the payload"))
+                })?;
                 let payload = base64::Engine::decode(
                     &base64::engine::general_purpose::URL_SAFE_NO_PAD,
                     payload,
                 )
-                .unwrap();
-                serde_json::from_slice(&payload).unwrap()
+                .map_err(|e| Error::Jwt(serde::de::Error::custom(e)))?;
+                serde_json::from_slice(&payload).map_err(Error::Jwt)
             }
         }
     }

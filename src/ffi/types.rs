@@ -7,6 +7,22 @@ pub struct ngx_str_t {
     pub data: *mut u8,
 }
 
+impl ngx_str_t {
+    pub const fn new(msg: &'static str) -> Self {
+        Self {
+            len: msg.len(),
+            data: msg.as_ptr().cast_mut(),
+        }
+    }
+
+    pub const fn none() -> Self {
+        Self {
+            len: 0,
+            data: std::ptr::null_mut(),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Key {
@@ -107,24 +123,44 @@ impl Error {
     pub const fn new(status: u16, msg: &'static str) -> Self {
         Self {
             status,
-            msg: ngx_str_t {
-                len: msg.len(),
-                data: msg.as_ptr().cast_mut(),
-            },
+            msg: ngx_str_t::new(msg),
         }
     }
 
     pub const fn no_msg(status: u16) -> Self {
         Self {
             status,
-            msg: ngx_str_t {
-                len: 0,
-                data: std::ptr::null_mut(),
-            },
+            msg: ngx_str_t::none(),
         }
     }
 
     pub const fn none() -> Self {
         Self::no_msg(0)
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct Token {
+    pub request: *const libc::c_void,
+    pub status: u16,
+    pub error: ngx_str_t,
+    pub email: RustSlice,
+    pub given_name: RustSlice,
+    pub family_name: RustSlice,
+    pub cookie: RustSlice,
+}
+
+impl Token {
+    pub fn ok(request: *const libc::c_void, token: crate::types::Token, cookie: String) -> Self {
+        Self {
+            request,
+            status: 0,
+            error: ngx_str_t::none(),
+            email: token.email.into(),
+            given_name: token.given_name.map_or(RustSlice::none(), RustSlice::from),
+            family_name: token.family_name.map_or(RustSlice::none(), RustSlice::from),
+            cookie: cookie.into(),
+        }
     }
 }

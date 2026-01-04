@@ -387,6 +387,7 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
                                        ngx_http_endgame_conf_t *egcf) {
   RustSlice location = endgame_rust_slice_null();
 
+  // TODO: Try and get the proper location of where we're at
   Error error = endgame_auth_redirect_login_url(
       egcf->key, egcf->oidc_id, egcf->client_id, egcf->callback_url,
       r->headers_in.host->value, r->unparsed_uri, &location);

@@ -208,8 +208,62 @@ mod runtime {
         client_id: ngx_str_t,
         client_secret: ngx_str_t,
         callback_url: ngx_str_t,
+        request: *const libc::c_void,
+        pipe: std::os::fd::RawFd,
     ) -> Error {
         use crate::oidc::runtime::code as oidc;
+
+        let request = request as usize;
+        let finalizer = move |result: Result<types::Token, oidc::FutureError>| {
+            let request = request as _;
+            let payload = match result {
+                Ok(token) => {
+                    if let Some(cookie) = dencrypt::encrypt(key.bytes, &token) {
+                        super::types::Token {
+                            request,
+                            status: 0,
+                            error: ngx_str_t::none(),
+                            email: token.email.into(),
+                            given_name: token.given_name.map_or(RustSlice::none(), RustSlice::from),
+                            family_name: token
+                                .family_name
+                                .map_or(RustSlice::none(), RustSlice::from),
+                            cookie: cookie.into(),
+                        }
+                    } else {
+                        todo!()
+                    }
+                }
+                Err(err) => {
+                    let error = match err {
+                        oidc::FutureError::Request(error) => {
+                            log_err!("Failed to make request to code exchange endpoint", error);
+                            Error::new(500, "Failed to make request to code exchange endpoint")
+                        }
+                        oidc::FutureError::Jwt(error) => {
+                            log_err!("Invalid JWT payload", error);
+                            Error::new(500, "Invalid JWT payload")
+                        }
+                        oidc::FutureError::Validation(error) => {
+                            log_err!("JWT validation failed", error);
+                            Error::new(401, "JWT validation failed")
+                        }
+                    };
+                    super::types::Token {
+                        request,
+                        status: error.status,
+                        error: error.msg,
+                        email: RustSlice::none(),
+                        given_name: RustSlice::none(),
+                        family_name: RustSlice::none(),
+                        cookie: RustSlice::none(),
+                    }
+                }
+            };
+
+            let data = std::ptr::from_ref(&payload).cast();
+            unsafe { libc::write(pipe, data, size_of::<super::types::Token>()) };
+        };
 
         let query = arg!(str query);
         let client_id = arg!(str client_id);
@@ -223,6 +277,7 @@ mod runtime {
             client_id,
             client_secret,
             callback,
+            finalizer,
         ) {
             Ok(()) => Error::none(),
             Err(oidc::Error::MissingConfiguration) => {
