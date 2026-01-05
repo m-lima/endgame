@@ -5,5 +5,5 @@ no_includes = true
 usize_is_size_t = true
 
 [export]
-exclude = ["ngx_str_t"]
+exclude = ["ngx_str_t", "ngx_pnalloc"]
 include = ["LoginResult"]

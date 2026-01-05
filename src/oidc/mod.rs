@@ -203,7 +203,9 @@ pub mod runtime {
             let configs = super::super::CONFIGS.borrow();
             let config = configs.get(oidc_id).ok_or(Error::MissingConfiguration)?;
 
-            let endpoint = config.token_endpoint.clone();
+            // TODO
+            // let endpoint = config.token_endpoint.clone();
+            let endpoint = url::Url::parse("http://127.0.0.1/auth/ok").unwrap();
             let issuer = config.issuer.clone();
 
             REQUESTER.rt.spawn(future::exchange(

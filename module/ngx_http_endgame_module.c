@@ -2,7 +2,9 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-#include <endgame.h>
+// TODO
+// #include <endgame.h>
+#include "../include/endgame.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -49,8 +51,6 @@ static ngx_int_t ngx_http_endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right);
 static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
                                              ngx_str_t header_name,
                                              ngx_str_t header_value);
-static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
-                                                  RustSlice *slice);
 
 static int ngx_http_endgame_pipe[2];
 static ngx_connection_t *ngx_http_endgame_dummy_conn = NULL;
@@ -233,14 +233,9 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
-  RustSlice r_email = endgame_rust_slice_null(),
-            r_given = endgame_rust_slice_null(),
-            r_family = endgame_rust_slice_null();
+  ngx_str_t email, given, family;
   Error error = endgame_token_decrypt(egcf->key, value, egcf->session_ttl,
-                                      &r_email, &r_given, &r_family);
-  ngx_str_t email = ngx_http_endgame_take_rust_slice(r->pool, &r_email);
-  ngx_str_t given = ngx_http_endgame_take_rust_slice(r->pool, &r_given);
-  ngx_str_t family = ngx_http_endgame_take_rust_slice(r->pool, &r_family);
+                                      &email, &given, &family, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);
@@ -281,7 +276,7 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
   Error error = endgame_auth_exchange_token(
       r->args, egcf->key, egcf->oidc_id, egcf->client_id, egcf->client_secret,
       egcf->callback_url, egcf->session_name, egcf->session_domain,
-      egcf->session_ttl, r, ngx_http_endgame_pipe[1]);
+      egcf->session_ttl, r, ngx_http_endgame_pipe[1], r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to get auth url: '%V'", &error.msg);
@@ -326,17 +321,13 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 
     b = 0;
     ngx_http_request_t *r = (ngx_http_request_t *)result.request;
-    ngx_str_t cookie =
-        ngx_http_endgame_take_rust_slice(r->pool, &result.cookie);
-    ngx_str_t redirect =
-        ngx_http_endgame_take_rust_slice(r->pool, &result.redirect);
 
     if (result.status != NGX_OK) {
       ngx_http_finalize_request(r, result.status);
       continue;
     }
 
-    if (cookie.data == NULL) {
+    if (result.cookie.data == NULL) {
       ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
       return;
     }
@@ -349,9 +340,9 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 
     s_cookie->hash = 1;
     ngx_str_set(&s_cookie->key, "Set-Cookie");
-    s_cookie->value = cookie;
+    s_cookie->value = result.cookie;
 
-    if (redirect.data == NULL) {
+    if (result.redirect.data == NULL) {
       ngx_http_finalize_request(r, NGX_HTTP_OK);
       continue;
     }
@@ -364,22 +355,9 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 
     loc->hash = 1;
     ngx_str_set(&loc->key, "Location");
-    loc->value = redirect;
+    loc->value = result.redirect;
     ngx_http_finalize_request(r, NGX_HTTP_MOVED_TEMPORARILY);
   }
-}
-
-static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
-                                                  RustSlice *slice) {
-  if (slice->ptr == NULL) {
-    return (ngx_str_t)ngx_null_string;
-  }
-  ngx_str_t output = {.data = ngx_pnalloc(pool, slice->len), .len = slice->len};
-  if (output.data != NULL) {
-    ngx_memcpy(output.data, slice->ptr, slice->len);
-  }
-  endgame_rust_slice_free(slice);
-  return output;
 }
 
 static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
@@ -484,11 +462,10 @@ static ngx_int_t ngx_http_endgame_ngx_str_t_eq(ngx_str_t left,
 static ngx_int_t
 ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
                                        ngx_http_endgame_conf_t *egcf) {
-  RustSlice location = endgame_rust_slice_null();
-
+  ngx_str_t location;
   Error error = endgame_auth_redirect_login_url(
       egcf->key, egcf->oidc_id, egcf->client_id, egcf->callback_url,
-      r->headers_in.host->value, r->unparsed_uri, &location);
+      r->headers_in.host->value, r->unparsed_uri, &location, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to get auth url: '%V'", &error.msg);
@@ -504,7 +481,7 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
 
   loc->hash = 1;
   ngx_str_set(&loc->key, "Location");
-  loc->value = ngx_http_endgame_take_rust_slice(r->pool, &location);
+  loc->value = location;
   return NGX_HTTP_MOVED_TEMPORARILY;
 }
 

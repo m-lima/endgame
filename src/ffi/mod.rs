@@ -103,7 +103,7 @@ mod conf {
 }
 
 mod runtime {
-    use super::types::{Error, Key, RustSlice, ngx_str_t};
+    use super::types::{Error, Key, ngx_str_t};
     use crate::{dencrypt, types};
 
     macro_rules! bail {
@@ -153,13 +153,21 @@ mod runtime {
         (url $value: ident) => {
             attempt!(ok url::Url::parse(arg!(str $value)), $value, "not a valid URL")
         };
-        (null $value: ident) => {
-            attempt!(if $value.ptr.is_null(), $value, "null")
+    }
+
+    macro_rules! to_str {
+        ($value: expr, $pool: ident) => {
+            match ngx_str_t::copy($value, $pool) {
+                Some(v) => v,
+                None => return Error::new(500, "Failed to allocate return value"),
+            }
         };
-        (null $value: ident $($rest: ident) *) => {{
-            arg!(null $value);
-            arg!(null $($rest) *);
-        }};
+        (opt $value: expr, $pool: ident) => {
+            match $value {
+                Some(v) => to_str!(v, $pool),
+                None => ngx_str_t::none(),
+            }
+        };
     }
 
     #[unsafe(no_mangle)]
@@ -170,7 +178,8 @@ mod runtime {
         callback_url: ngx_str_t,
         redirect_host: ngx_str_t,
         redirect_path: ngx_str_t,
-        login_url: &mut RustSlice,
+        login_url: &mut ngx_str_t,
+        pool: *mut libc::c_void,
     ) -> Error {
         use crate::oidc::runtime::redirect as oidc;
 
@@ -190,7 +199,7 @@ mod runtime {
 
         match oidc::get_redirect_login_url(key.bytes, oidc_id, client_id, &callback_url, redirect) {
             Ok(url) => {
-                *login_url = url.to_string().into();
+                *login_url = to_str!(url, pool);
                 Error::none()
             }
             Err(oidc::Error::MissingConfiguration) => {
@@ -213,6 +222,7 @@ mod runtime {
         session_ttl: i64,
         request: *const libc::c_void,
         pipe: std::os::fd::RawFd,
+        pool: *mut libc::c_void,
     ) -> Error {
         use super::types::LoginResult;
         use crate::oidc::runtime::code as oidc;
@@ -220,8 +230,11 @@ mod runtime {
         let session_name = arg!(str session_name);
         let session_domain = arg!(str session_domain);
         let request = request as usize;
+        let pool = pool as usize;
         let finalizer = move |result: Result<(String, url::Url), oidc::FutureError>| {
             let request = request as _;
+            let pool = pool as _;
+
             let payload = match result {
                 Ok((cookie, redirect)) => {
                     let cookie = if session_domain.is_empty() {
@@ -233,11 +246,23 @@ mod runtime {
                             "{session_name}={cookie};Path=/;Domain={session_domain};Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax"
                         )
                     };
-                    LoginResult {
-                        request,
-                        status: 0,
-                        cookie: cookie.into(),
-                        redirect: redirect.to_string().into(),
+                    if let Some((cookie, redirect)) = ngx_str_t::copy(cookie, pool)
+                        .and_then(|c| ngx_str_t::copy(redirect, pool).map(|r| (c, r)))
+                    {
+                        LoginResult {
+                            request,
+                            status: 0,
+                            cookie,
+                            redirect,
+                        }
+                    } else {
+                        log_err!("Failed to allocate return value");
+                        LoginResult {
+                            request,
+                            status: 500,
+                            cookie: ngx_str_t::none(),
+                            redirect: ngx_str_t::none(),
+                        }
                     }
                 }
                 Err(err) => {
@@ -255,8 +280,8 @@ mod runtime {
                     LoginResult {
                         request,
                         status,
-                        cookie: RustSlice::none(),
-                        redirect: RustSlice::none(),
+                        cookie: ngx_str_t::none(),
+                        redirect: ngx_str_t::none(),
                     }
                 }
             };
@@ -292,11 +317,21 @@ mod runtime {
         key: Key,
         src: ngx_str_t,
         max_age_secs: u64,
-        email: &mut RustSlice,
-        given_name: &mut RustSlice,
-        family_name: &mut RustSlice,
+        email: &mut ngx_str_t,
+        given_name: &mut ngx_str_t,
+        family_name: &mut ngx_str_t,
+        pool: *mut libc::c_void,
     ) -> Error {
-        arg!(null email given_name family_name);
+        macro_rules! nullify {
+            ($value: ident) => {
+                if !$value.is_null() {
+                    *$value = ngx_str_t::none();
+                }
+            };
+        }
+        nullify!(email);
+        nullify!(given_name);
+        nullify!(family_name);
 
         let src = arg!(bytes src);
 
@@ -305,9 +340,9 @@ mod runtime {
         if let Some(token) = dencrypt::decrypt::<types::Token>(key.bytes, src)
             .filter(|t| t.timestamp >= min_timestamp)
         {
-            *email = token.email.into();
-            *given_name = token.given_name.map_or(RustSlice::none(), RustSlice::from);
-            *family_name = token.family_name.map_or(RustSlice::none(), RustSlice::from);
+            *email = to_str!(token.email, pool);
+            *given_name = to_str!(opt token.given_name, pool);
+            *family_name = to_str!(opt token.family_name, pool);
         }
 
         Error::none()

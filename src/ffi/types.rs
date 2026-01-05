@@ -1,10 +1,14 @@
+unsafe extern "C" {
+    fn ngx_pnalloc(pool: *mut libc::c_void, size: usize) -> *mut libc::c_void;
+}
+
 // allow(non_camel_case_types): to match the nginx type
 #[allow(non_camel_case_types)]
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct ngx_str_t {
-    pub len: usize,
-    pub data: *mut u8,
+    len: usize,
+    data: *mut u8,
 }
 
 impl ngx_str_t {
@@ -19,6 +23,26 @@ impl ngx_str_t {
         Self {
             len: 0,
             data: std::ptr::null_mut(),
+        }
+    }
+
+    pub const fn is_null(&self) -> bool {
+        self.data.is_null()
+    }
+
+    pub fn copy<T: AsRef<str>>(value: T, pool: *mut libc::c_void) -> Option<Self> {
+        let value = value.as_ref().as_bytes();
+        let ptr = unsafe { ngx_pnalloc(pool, value.len()).cast::<u8>() };
+
+        if ptr.is_null() {
+            None
+        } else {
+            let data = unsafe { std::slice::from_raw_parts_mut(ptr, value.len()) };
+            data.copy_from_slice(value);
+            Some(ngx_str_t {
+                data: data.as_mut_ptr(),
+                len: data.len(),
+            })
         }
     }
 }
@@ -63,57 +87,6 @@ impl ngx_str_t {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct RustSlice {
-    pub ptr: *mut u8,
-    pub len: usize,
-    pub cap: usize,
-}
-
-impl RustSlice {
-    pub const fn none() -> Self {
-        Self {
-            ptr: std::ptr::null_mut(),
-            len: 0,
-            cap: 0,
-        }
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_rust_slice_null() -> Self {
-        Self::none()
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_rust_slice_free(&mut self) {
-        if !self.ptr.is_null() && self.cap > 0 {
-            drop(unsafe { Vec::from_raw_parts(self.ptr, self.len, self.cap) });
-            self.ptr = std::ptr::null_mut();
-            self.len = 0;
-            self.cap = 0;
-        }
-    }
-}
-
-impl From<Vec<u8>> for RustSlice {
-    fn from(mut value: Vec<u8>) -> Self {
-        let slice = RustSlice {
-            ptr: value.as_mut_ptr(),
-            len: value.len(),
-            cap: value.capacity(),
-        };
-        std::mem::forget(value);
-        slice
-    }
-}
-
-impl From<String> for RustSlice {
-    fn from(value: String) -> Self {
-        value.into_bytes().into()
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug)]
 pub struct Error {
     pub status: u16,
     pub msg: ngx_str_t,
@@ -144,6 +117,6 @@ impl Error {
 pub struct LoginResult {
     pub request: *const libc::c_void,
     pub status: u16,
-    pub cookie: RustSlice,
-    pub redirect: RustSlice,
+    pub cookie: ngx_str_t,
+    pub redirect: ngx_str_t,
 }
