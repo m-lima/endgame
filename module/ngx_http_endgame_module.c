@@ -298,79 +298,83 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
 }
 
 static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
-  LoginResult result;
-  ssize_t n;
-  size_t b = 0;
+  static LoginResult result;
+  static size_t b;
 
   for (;;) {
-    n = read(ngx_http_endgame_pipe[0], ((uint8_t *)&result) + b,
-             sizeof(LoginResult) - b);
+    for (;;) {
+      ssize_t n = read(ngx_http_endgame_pipe[0], ((uint8_t *)&result) + b,
+                       sizeof(LoginResult) - b);
 
-    if (n == 0) {
+      if (n == 0) {
+        ngx_log_error(NGX_LOG_ERR, ev->log, 0, "endgame pipe closed");
+        ngx_abort();
+      }
+
+      if (n == -1) {
+        if (ngx_errno == NGX_EAGAIN) {
+          return;
+        }
+        ngx_log_error(NGX_LOG_ERR, ev->log, 0, "failed to read from pipe: %d",
+                      ngx_errno);
+        ngx_abort();
+      }
+
+      b += n;
+
+      if (b == sizeof(LoginResult)) {
+        break;
+      }
+    }
+
+    b = 0;
+    ngx_http_request_t *r = (ngx_http_request_t *)result.request;
+    ngx_str_t cookie =
+        ngx_http_endgame_take_rust_slice(r->pool, &result.cookie);
+    ngx_str_t redirect =
+        ngx_http_endgame_take_rust_slice(r->pool, &result.redirect);
+
+    if (result.error.data != NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "failed to exchange token: '%V'", &result.error);
+    }
+
+    if (result.status != NGX_OK) {
+      ngx_http_finalize_request(r, result.status);
+      continue;
+    }
+
+    if (cookie.data == NULL) {
+      ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
       return;
     }
 
-    if (n == -1) {
-      if (ngx_errno == NGX_EAGAIN) {
-        return;
-      }
-      ngx_log_error(NGX_LOG_ERR, ev->log, 0, "failed to read from pipe: %d",
-                    ngx_errno);
-      ngx_abort();
+    ngx_table_elt_t *s_cookie = ngx_list_push(&r->headers_out.headers);
+    if (s_cookie == NULL) {
+      ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+      continue;
     }
 
-    b += n;
+    s_cookie->hash = 1;
+    ngx_str_set(&s_cookie->key, "Set-Cookie");
+    s_cookie->value = cookie;
 
-    if (b == sizeof(LoginResult)) {
-      break;
+    if (redirect.data == NULL) {
+      ngx_http_finalize_request(r, NGX_HTTP_OK);
+      continue;
     }
+
+    ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
+    if (loc == NULL) {
+      ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+      continue;
+    }
+
+    loc->hash = 1;
+    ngx_str_set(&loc->key, "Location");
+    loc->value = redirect;
+    ngx_http_finalize_request(r, NGX_HTTP_MOVED_TEMPORARILY);
   }
-
-  ngx_http_request_t *r = (ngx_http_request_t *)result.request;
-  ngx_str_t cookie = ngx_http_endgame_take_rust_slice(r->pool, &result.cookie);
-  ngx_str_t redirect =
-      ngx_http_endgame_take_rust_slice(r->pool, &result.redirect);
-
-  if (result.error.data != NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to exchange token: '%V'", &result.error);
-  }
-
-  if (result.status != NGX_OK) {
-    ngx_http_finalize_request(r, result.status);
-    return;
-  }
-
-  if (cookie.data == NULL) {
-    ngx_http_finalize_request(r, NGX_HTTP_UNAUTHORIZED);
-    return;
-  }
-
-  ngx_table_elt_t *s_cookie = ngx_list_push(&r->headers_out.headers);
-  if (s_cookie == NULL) {
-    ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-    return;
-  }
-
-  s_cookie->hash = 1;
-  ngx_str_set(&s_cookie->key, "Set-Cookie");
-  s_cookie->value = cookie;
-
-  if (redirect.data == NULL) {
-    ngx_http_finalize_request(r, NGX_HTTP_OK);
-    return;
-  }
-
-  ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
-  if (loc == NULL) {
-    ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
-    return;
-  }
-
-  loc->hash = 1;
-  ngx_str_set(&loc->key, "Location");
-  loc->value = redirect;
-  ngx_http_finalize_request(r, NGX_HTTP_MOVED_TEMPORARILY);
 }
 
 static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
@@ -503,7 +507,6 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
                                        ngx_http_endgame_conf_t *egcf) {
   RustSlice location = endgame_rust_slice_null();
 
-  // TODO: Try and get the proper location of where we're at
   Error error = endgame_auth_redirect_login_url(
       egcf->key, egcf->oidc_id, egcf->client_id, egcf->callback_url,
       r->headers_in.host->value, r->unparsed_uri, &location);
