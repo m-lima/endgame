@@ -49,7 +49,6 @@ pub mod config {
             return Ok(idx);
         }
 
-        // TODO: Have a single runtime instead of one per worker
         let config = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -135,6 +134,9 @@ pub mod runtime {
             rt: tokio::runtime::Runtime,
         }
 
+        // Here, we build the runtime
+        // It needs to live in the worker process, so that it can share memory with nginx
+        // This is important for, e.g., allocating `ngx_str_t`s
         static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| {
             let layer = treetrace::Layer::builder(treetrace::Stderr).build();
             let subscriber = tracing_subscriber::layer::SubscriberExt::with(

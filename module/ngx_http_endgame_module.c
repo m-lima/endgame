@@ -244,8 +244,7 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     return error.status;
   }
 
-  // TODO: What happens if the email is empty?
-  if (email.data == NULL || email.len == 0) {
+  if (email.data == NULL) {
     return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
@@ -299,7 +298,7 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
                        sizeof(LoginResult) - b);
 
       if (n == 0) {
-        ngx_log_error(NGX_LOG_ERR, ev->log, 0, "endgame pipe closed");
+        ngx_log_error(NGX_LOG_CRIT, ev->log, 0, "endgame pipe closed");
         ngx_abort();
       }
 
@@ -307,7 +306,7 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
         if (ngx_errno == NGX_EAGAIN) {
           return;
         }
-        ngx_log_error(NGX_LOG_ERR, ev->log, 0, "failed to read from pipe: %d",
+        ngx_log_error(NGX_LOG_CRIT, ev->log, 0, "failed to read from pipe: %d",
                       ngx_errno);
         ngx_abort();
       }
