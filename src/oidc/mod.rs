@@ -275,13 +275,13 @@ pub mod runtime {
 
             pub enum Error {
                 Request(reqwest::Error),
-                Response(String),
+                Response,
                 Encryption,
             }
 
             impl Error {
-                fn response<T: std::fmt::Display>(e: T) -> Self {
-                    Self::Response(e.to_string())
+                fn response<T>(_: T) -> Self {
+                    Self::Response
                 }
             }
 
@@ -293,8 +293,6 @@ pub mod runtime {
                 issuer: url::Url,
                 redirect: url::Url,
             ) -> Result<(String, url::Url), Error> {
-                // TODO: On an expired token, google returns a 400. We shouldn't boxk with a 500
-                // in that case
                 let response = super::REQUESTER
                     .client
                     .post(endpoint)
@@ -315,18 +313,8 @@ pub mod runtime {
                     nonce,
                 );
 
-                if jwt.iss != issuer {
-                    Err(Error::Response(format!(
-                        "Issuer does not match: '{}' != '{}'",
-                        jwt.iss, issuer
-                    )))
-                } else if jwt.nonce != nonce {
-                    Err(Error::Response(format!(
-                        "Nonce does not match: '{}' != '{}'",
-                        jwt.nonce, nonce,
-                    )))
-                } else if jwt.email.trim().is_empty() {
-                    Err(Error::Response(String::from("Email is empty")))
+                if jwt.iss != issuer || jwt.nonce != nonce || jwt.email.trim().is_empty() {
+                    Err(Error::Response)
                 } else {
                     let token = types::Token {
                         timestamp: types::Timestamp::now(),
@@ -341,9 +329,7 @@ pub mod runtime {
             }
 
             fn decode_jwt(token: &str) -> Result<Jwt, Error> {
-                let payload = token.split('.').nth(1).ok_or_else(|| {
-                    Error::Response(String::from("JWT token missing the payload"))
-                })?;
+                let payload = token.split('.').nth(1).ok_or(Error::Response)?;
                 let payload = base64::Engine::decode(
                     &base64::engine::general_purpose::URL_SAFE_NO_PAD,
                     payload,

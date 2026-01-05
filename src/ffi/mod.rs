@@ -244,11 +244,7 @@ mod runtime {
                             log_err!("Failed to make request to code exchange endpoint", error);
                             Error::new(500, "Failed to make request to code exchange endpoint")
                         }
-                        oidc::FutureError::Response(error) => {
-                            // TODO: Remove this log entry
-                            log_err!("Could to exchange token", error);
-                            Error::new(401, "JWT validation failed")
-                        }
+                        oidc::FutureError::Response => Error::new(401, "JWT validation failed"),
                         oidc::FutureError::Encryption => {
                             Error::new(500, "Failed to encrypt cookie")
                         }
