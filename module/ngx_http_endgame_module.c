@@ -48,7 +48,7 @@ static ngx_table_elt_t *ngx_http_endgame_header_find(ngx_list_part_t *part,
 static ngx_int_t ngx_http_endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right);
 static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
                                              ngx_str_t header_name,
-                                             RustSlice header_value);
+                                             ngx_str_t header_value);
 static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
                                                   RustSlice *slice);
 
@@ -233,12 +233,14 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
-  RustSlice email = endgame_rust_slice_null(),
-            given = endgame_rust_slice_null(),
-            family = endgame_rust_slice_null();
-
+  RustSlice r_email = endgame_rust_slice_null(),
+            r_given = endgame_rust_slice_null(),
+            r_family = endgame_rust_slice_null();
   Error error = endgame_token_decrypt(egcf->key, value, egcf->session_ttl,
-                                      &email, &given, &family);
+                                      &r_email, &r_given, &r_family);
+  ngx_str_t email = ngx_http_endgame_take_rust_slice(r->pool, &r_email);
+  ngx_str_t given = ngx_http_endgame_take_rust_slice(r->pool, &r_given);
+  ngx_str_t family = ngx_http_endgame_take_rust_slice(r->pool, &r_family);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);
@@ -247,10 +249,8 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     return error.status;
   }
 
-  if (email.ptr == NULL || email.len == 0) {
-    endgame_rust_slice_free(&email);
-    endgame_rust_slice_free(&given);
-    endgame_rust_slice_free(&family);
+  // TODO: What happens if the email is empty?
+  if (email.data == NULL || email.len == 0) {
     return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
@@ -258,15 +258,12 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
   result =
       ngx_http_endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), email);
   if (result != NGX_OK) {
-    endgame_rust_slice_free(&given);
-    endgame_rust_slice_free(&family);
     return result;
   }
 
   result = ngx_http_endgame_set_header(r, (ngx_str_t)ngx_string("X-Given-Name"),
                                        given);
   if (result != NGX_OK) {
-    endgame_rust_slice_free(&family);
     return result;
   }
 
@@ -387,7 +384,7 @@ static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
 
 static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
                                              ngx_str_t header_name,
-                                             RustSlice header_value) {
+                                             ngx_str_t header_value) {
   // Disable the header first thing
   ngx_table_elt_t *header =
       ngx_http_endgame_header_find(&r->headers_in.headers.part, header_name);
@@ -396,24 +393,14 @@ static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
   }
 
   // If the incoming value is null, stop here
-  if (header_value.ptr == NULL || header_value.len == 0) {
-    endgame_rust_slice_free(&header_value);
+  if (header_value.data == NULL || header_value.len == 0) {
     return NGX_OK;
-  }
-
-  // Copy the rust string into a ngx_str_t
-  ngx_str_t header_value_str =
-      ngx_http_endgame_take_rust_slice(r->pool, &header_value);
-  if (header_value_str.data == NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "Could not allocate `%V` string", &header_name);
-    return NGX_HTTP_INTERNAL_SERVER_ERROR;
   }
 
   // If the header already existed, copy the value in, enable, and stop here
   if (header != NULL) {
     header->hash = 1;
-    header->value = header_value_str;
+    header->value = header_value;
     return NGX_OK;
   }
 
@@ -426,7 +413,7 @@ static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
 
   header->hash = 1;
   header->key = header_name;
-  header->value = header_value_str;
+  header->value = header_value;
 
   return NGX_OK;
 }
