@@ -248,6 +248,8 @@ pub mod runtime {
                 family_name: Option<String>,
             }
 
+            // allow(clippy::too_many_arguments): need to pass the whole context
+            #[allow(clippy::too_many_arguments)]
             pub async fn exchange<F: FnOnce(Result<(String, url::Url), Error>)>(
                 key: crypter::Key,
                 endpoint: url::Url,
@@ -273,9 +275,14 @@ pub mod runtime {
 
             pub enum Error {
                 Request(reqwest::Error),
-                Jwt(serde_json::Error),
-                Validation(String),
+                Response(String),
                 Encryption,
+            }
+
+            impl Error {
+                fn response<T: std::fmt::Display>(e: T) -> Self {
+                    Self::Response(e.to_string())
+                }
             }
 
             async fn exchange_fallible(
@@ -296,10 +303,10 @@ pub mod runtime {
                     .await
                     .map_err(Error::Request)?
                     .error_for_status()
-                    .map_err(Error::Request)?
+                    .map_err(Error::response)?
                     .json::<Response>()
                     .await
-                    .map_err(Error::Request)?;
+                    .map_err(Error::response)?;
 
                 let jwt = decode_jwt(&response.id_token)?;
 
@@ -309,17 +316,17 @@ pub mod runtime {
                 );
 
                 if jwt.iss != issuer {
-                    Err(Error::Validation(format!(
+                    Err(Error::Response(format!(
                         "Issuer does not match: '{}' != '{}'",
                         jwt.iss, issuer
                     )))
                 } else if jwt.nonce != nonce {
-                    Err(Error::Validation(format!(
+                    Err(Error::Response(format!(
                         "Nonce does not match: '{}' != '{}'",
                         jwt.nonce, nonce,
                     )))
                 } else if jwt.email.trim().is_empty() {
-                    Err(Error::Validation(String::from("Email is empty")))
+                    Err(Error::Response(String::from("Email is empty")))
                 } else {
                     let token = types::Token {
                         timestamp: types::Timestamp::now(),
@@ -335,14 +342,14 @@ pub mod runtime {
 
             fn decode_jwt(token: &str) -> Result<Jwt, Error> {
                 let payload = token.split('.').nth(1).ok_or_else(|| {
-                    Error::Jwt(serde::de::Error::custom("JWT token missing the payload"))
+                    Error::Response(String::from("JWT token missing the payload"))
                 })?;
                 let payload = base64::Engine::decode(
                     &base64::engine::general_purpose::URL_SAFE_NO_PAD,
                     payload,
                 )
-                .map_err(|e| Error::Jwt(serde::de::Error::custom(e)))?;
-                serde_json::from_slice(&payload).map_err(Error::Jwt)
+                .map_err(Error::response)?;
+                serde_json::from_slice(&payload).map_err(Error::response)
             }
         }
     }

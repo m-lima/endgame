@@ -145,24 +145,11 @@ mod runtime {
         (str $value:ident) => {{
             let value = arg!(bytes $value);
             let value = attempt!(ok str::from_utf8(value), $value, "not valid UTF-8");
-            let value = value.trim();
-            attempt!(if !value.is_empty(), $value, "empty");
             value
         }};
         (url $value: ident) => {
             attempt!(ok url::Url::parse(arg!(str $value)), $value, "not a valid URL")
         };
-        (url $host: ident, $path: ident) => {{
-            let host = arg!(str $host);
-            let path = arg!(str $path);
-            match url::Url::parse(&format!("https://{host}{path}")) {
-                Ok(url) => url,
-                Err(err) => {
-                    log_err!("The constructed redirect URL is not valid", err);
-                    return Error::new(500, "The constructed redirect URL is not valid");
-                }
-            }
-        }};
         (null $value: ident) => {
             attempt!(if $value.ptr.is_null(), $value, "null")
         };
@@ -186,7 +173,17 @@ mod runtime {
 
         let client_id = arg!(str client_id);
         let callback_url = arg!(url callback_url);
-        let redirect = arg!(url redirect_host, redirect_path);
+        let redirect = {
+            let host = arg!(str redirect_host);
+            let path = arg!(str redirect_path);
+            match url::Url::parse(&format!("https://{host}{path}")) {
+                Ok(url) => url,
+                Err(err) => {
+                    log_err!("The constructed redirect URL is not valid", err);
+                    return Error::new(500, "The constructed redirect URL is not valid");
+                }
+            }
+        };
 
         match oidc::get_redirect_login_url(key.bytes, oidc_id, client_id, &callback_url, redirect) {
             Ok(url) => {
@@ -208,35 +205,48 @@ mod runtime {
         client_id: ngx_str_t,
         client_secret: ngx_str_t,
         callback_url: ngx_str_t,
+        session_name: ngx_str_t,
+        session_domain: ngx_str_t,
+        session_ttl: i64,
         request: *const libc::c_void,
         pipe: std::os::fd::RawFd,
     ) -> Error {
         use super::types::LoginResult;
         use crate::oidc::runtime::code as oidc;
 
+        let session_name = arg!(str session_name);
+        let session_domain = arg!(str session_domain);
         let request = request as usize;
         let finalizer = move |result: Result<(String, url::Url), oidc::FutureError>| {
             let request = request as _;
             let payload = match result {
-                Ok((cookie, redirect)) => LoginResult {
-                    request,
-                    status: 0,
-                    error: ngx_str_t::none(),
-                    cookie: cookie.into(),
-                    redirect: redirect.to_string().into(),
-                },
+                Ok((cookie, redirect)) => {
+                    let cookie = if session_domain.is_empty() {
+                        format!(
+                            "{session_name}={cookie};Path=/;Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax"
+                        )
+                    } else {
+                        format!(
+                            "{session_name}={cookie};Path=/;Domain={session_domain};Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax"
+                        )
+                    };
+                    LoginResult {
+                        request,
+                        status: 0,
+                        error: ngx_str_t::none(),
+                        cookie: cookie.into(),
+                        redirect: redirect.to_string().into(),
+                    }
+                }
                 Err(err) => {
                     let error = match err {
                         oidc::FutureError::Request(error) => {
                             log_err!("Failed to make request to code exchange endpoint", error);
                             Error::new(500, "Failed to make request to code exchange endpoint")
                         }
-                        oidc::FutureError::Jwt(error) => {
-                            log_err!("Invalid JWT payload", error);
-                            Error::new(500, "Invalid JWT payload")
-                        }
-                        oidc::FutureError::Validation(error) => {
-                            log_err!("JWT validation failed", error);
+                        oidc::FutureError::Response(error) => {
+                            // TODO: Remove this log entry
+                            log_err!("Could to exchange token", error);
                             Error::new(401, "JWT validation failed")
                         }
                         oidc::FutureError::Encryption => {

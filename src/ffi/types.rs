@@ -61,6 +61,7 @@ impl ngx_str_t {
     }
 }
 
+// TODO: Allocate these in nginx
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct RustSlice {

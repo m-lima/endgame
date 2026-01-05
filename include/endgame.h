@@ -50,6 +50,9 @@ struct Error endgame_auth_exchange_token(ngx_str_t query,
                                          ngx_str_t client_id,
                                          ngx_str_t client_secret,
                                          ngx_str_t callback_url,
+                                         ngx_str_t domain,
+                                         ngx_str_t name,
+                                         int64_t ttl,
                                          const void *request,
                                          int pipe);
 

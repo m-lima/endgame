@@ -283,7 +283,8 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
                                            ngx_http_endgame_conf_t *egcf) {
   Error error = endgame_auth_exchange_token(
       r->args, egcf->key, egcf->oidc_id, egcf->client_id, egcf->client_secret,
-      egcf->callback_url, r, ngx_http_endgame_pipe[1]);
+      egcf->callback_url, egcf->session_name, egcf->session_domain,
+      egcf->session_ttl, r, ngx_http_endgame_pipe[1]);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to get auth url: '%V'", &error.msg);
@@ -305,7 +306,14 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
     n = read(ngx_http_endgame_pipe[0], ((uint8_t *)&result) + b,
              sizeof(LoginResult) - b);
 
+    if (n == 0) {
+      return;
+    }
+
     if (n == -1) {
+      if (ngx_errno == NGX_EAGAIN) {
+        return;
+      }
       ngx_log_error(NGX_LOG_ERR, ev->log, 0, "failed to read from pipe: %d",
                     ngx_errno);
       ngx_abort();
@@ -346,10 +354,6 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 
   s_cookie->hash = 1;
   ngx_str_set(&s_cookie->key, "Set-Cookie");
-  // TODO
-  // cookie = { 'session=;Path=/;Max-Age=0;Secure;HttpOnly;SameSite=lax' }
-  // cookie = {'email=;Path=/;Max-Age=2592000;Secure;HttpOnly;SameSite=lax')
-  // Set-Cookie 'session=;Path=/;Max-Age=0;Secure;HttpOnly;SameSite=lax';
   s_cookie->value = cookie;
 
   if (redirect.data == NULL) {
@@ -565,15 +569,28 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
     if (prev->key_set) {
       conf->key = prev->key;
       conf->key_set = 1;
-    } else if (conf->mode == ENABLED || conf->mode == CALLBACK) {
-      return "missing endame_key";
     }
   }
 
   if (conf->oidc_id == UNUSED_ID) {
     if (prev->oidc_id != UNUSED_ID) {
       conf->oidc_id = prev->oidc_id;
-    } else if (conf->mode == ENABLED || conf->mode == CALLBACK) {
+    }
+  }
+
+  if (conf->mode == ENABLED || conf->mode == CALLBACK) {
+#define check_missing($name)                                                   \
+  if (conf->$name.len == 0)                                                    \
+    return "missing endgame_$name";
+    check_missing(session_name);
+    check_missing(client_id);
+    check_missing(client_secret);
+    check_missing(callback_url);
+#undef check_missing
+    if (!conf->key_set) {
+      return "missing endame_key";
+    }
+    if (conf->oidc_id == UNUSED_ID) {
       return "endgame discovery not initialized";
     }
   }
