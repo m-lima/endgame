@@ -18,12 +18,13 @@ typedef struct Error {
   ngx_str_t msg;
 } Error;
 
-typedef struct Token {
+typedef struct LoginResult {
   const void *request;
   uint16_t status;
   ngx_str_t error;
   struct RustSlice cookie;
-} Token;
+  struct RustSlice redirect;
+} LoginResult;
 
 void endgame_ngx_str_t_trim(ngx_str_t *string);
 

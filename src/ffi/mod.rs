@@ -211,17 +211,19 @@ mod runtime {
         request: *const libc::c_void,
         pipe: std::os::fd::RawFd,
     ) -> Error {
+        use super::types::LoginResult;
         use crate::oidc::runtime::code as oidc;
 
         let request = request as usize;
-        let finalizer = move |result: Result<String, oidc::FutureError>| {
+        let finalizer = move |result: Result<(String, url::Url), oidc::FutureError>| {
             let request = request as _;
             let payload = match result {
-                Ok(cookie) => super::types::Token {
+                Ok((cookie, redirect)) => LoginResult {
                     request,
                     status: 0,
                     error: ngx_str_t::none(),
                     cookie: cookie.into(),
+                    redirect: redirect.to_string().into(),
                 },
                 Err(err) => {
                     let error = match err {
@@ -241,17 +243,18 @@ mod runtime {
                             Error::new(500, "Failed to encrypt cookie")
                         }
                     };
-                    super::types::Token {
+                    LoginResult {
                         request,
                         status: error.status,
                         error: error.msg,
                         cookie: RustSlice::none(),
+                        redirect: RustSlice::none(),
                     }
                 }
             };
 
             let data = std::ptr::from_ref(&payload).cast();
-            unsafe { libc::write(pipe, data, size_of::<super::types::Token>()) };
+            unsafe { libc::write(pipe, data, size_of::<LoginResult>()) };
         };
 
         let query = arg!(str query);

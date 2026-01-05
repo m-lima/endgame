@@ -121,8 +121,7 @@ pub mod runtime {
                 .append_pair("scope", "openid email profile")
                 .append_pair("redirect_uri", callback.as_str())
                 .append_pair("state", &state)
-                .append_pair("nonce", &nonce)
-                .append_pair("access_type", "offline");
+                .append_pair("nonce", &nonce);
 
             Ok(url)
         }
@@ -166,7 +165,7 @@ pub mod runtime {
 
         pub use future::Error as FutureError;
 
-        pub fn exchange<F: 'static + Send + FnOnce(Result<String, future::Error>)>(
+        pub fn exchange<F: 'static + Send + FnOnce(Result<(String, url::Url), future::Error>)>(
             query: &str,
             key: crypter::Key,
             oidc_id: usize,
@@ -216,6 +215,7 @@ pub mod runtime {
                 callback,
                 state.nonce,
                 issuer,
+                state.redirect,
                 finalizer,
             ));
 
@@ -237,7 +237,6 @@ pub mod runtime {
             #[derive(Debug, serde::Deserialize)]
             struct Response {
                 id_token: String,
-                refresh_token: Option<String>,
             }
 
             #[derive(Debug, serde::Deserialize)]
@@ -249,26 +248,27 @@ pub mod runtime {
                 family_name: Option<String>,
             }
 
-            pub async fn exchange<F: FnOnce(Result<String, Error>)>(
+            pub async fn exchange<F: FnOnce(Result<(String, url::Url), Error>)>(
                 key: crypter::Key,
                 endpoint: url::Url,
                 code: String,
                 client_id: String,
                 client_secret: String,
-                redirect_uri: url::Url,
+                callback: url::Url,
                 nonce: [u8; 32],
                 issuer: url::Url,
+                redirect: url::Url,
                 finalizer: F,
             ) {
                 let request = Request {
                     code,
                     client_id,
                     client_secret,
-                    redirect_uri,
+                    redirect_uri: callback,
                     grant_type: "authorization_code",
                 };
 
-                finalizer(exchange_fallible(key, endpoint, request, nonce, issuer).await);
+                finalizer(exchange_fallible(key, endpoint, request, nonce, issuer, redirect).await);
             }
 
             pub enum Error {
@@ -284,7 +284,10 @@ pub mod runtime {
                 request: Request,
                 nonce: [u8; 32],
                 issuer: url::Url,
-            ) -> Result<String, Error> {
+                redirect: url::Url,
+            ) -> Result<(String, url::Url), Error> {
+                // TODO: On an expired token, google returns a 400. We shouldn't boxk with a 500
+                // in that case
                 let response = super::REQUESTER
                     .client
                     .post(endpoint)
@@ -324,7 +327,9 @@ pub mod runtime {
                         given_name: jwt.given_name,
                         family_name: jwt.family_name,
                     };
-                    dencrypt::encrypt(key, &token).ok_or(Error::Encryption)
+                    dencrypt::encrypt(key, &token)
+                        .map(|c| (c, redirect))
+                        .ok_or(Error::Encryption)
                 }
             }
 

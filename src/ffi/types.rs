@@ -141,9 +141,10 @@ impl Error {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct Token {
+pub struct LoginResult {
     pub request: *const libc::c_void,
     pub status: u16,
     pub error: ngx_str_t,
     pub cookie: RustSlice,
+    pub redirect: RustSlice,
 }
