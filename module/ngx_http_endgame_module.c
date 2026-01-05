@@ -334,11 +334,6 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
     ngx_str_t redirect =
         ngx_http_endgame_take_rust_slice(r->pool, &result.redirect);
 
-    if (result.error.data != NULL) {
-      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "failed to exchange token: '%V'", &result.error);
-    }
-
     if (result.status != NGX_OK) {
       ngx_http_finalize_request(r, result.status);
       continue;
@@ -380,10 +375,7 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 static ngx_str_t ngx_http_endgame_take_rust_slice(ngx_pool_t *pool,
                                                   RustSlice *slice) {
   if (slice->ptr == NULL) {
-    return (ngx_str_t){
-        .len = 0,
-        .data = NULL,
-    };
+    return (ngx_str_t)ngx_null_string;
   }
   ngx_str_t output = {.data = ngx_pnalloc(pool, slice->len), .len = slice->len};
   if (output.data != NULL) {

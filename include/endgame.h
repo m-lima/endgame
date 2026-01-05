@@ -21,7 +21,6 @@ typedef struct Error {
 typedef struct LoginResult {
   const void *request;
   uint16_t status;
-  ngx_str_t error;
   struct RustSlice cookie;
   struct RustSlice redirect;
 } LoginResult;
@@ -50,9 +49,9 @@ struct Error endgame_auth_exchange_token(ngx_str_t query,
                                          ngx_str_t client_id,
                                          ngx_str_t client_secret,
                                          ngx_str_t callback_url,
-                                         ngx_str_t domain,
-                                         ngx_str_t name,
-                                         int64_t ttl,
+                                         ngx_str_t session_name,
+                                         ngx_str_t session_domain,
+                                         int64_t session_ttl,
                                          const void *request,
                                          int pipe);
 

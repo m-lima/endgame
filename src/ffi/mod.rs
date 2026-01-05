@@ -7,6 +7,9 @@ macro_rules! log_err {
             $err
         )
     };
+    ($msg: expr) => {
+        eprintln!(concat!("[", env!("CARGO_CRATE_NAME"), "] ", $msg))
+    };
 }
 
 mod conf {
@@ -233,26 +236,25 @@ mod runtime {
                     LoginResult {
                         request,
                         status: 0,
-                        error: ngx_str_t::none(),
                         cookie: cookie.into(),
                         redirect: redirect.to_string().into(),
                     }
                 }
                 Err(err) => {
-                    let error = match err {
+                    let status = match err {
                         oidc::FutureError::Request(error) => {
                             log_err!("Failed to make request to code exchange endpoint", error);
-                            Error::new(500, "Failed to make request to code exchange endpoint")
+                            500
                         }
-                        oidc::FutureError::Response => Error::new(401, "JWT validation failed"),
+                        oidc::FutureError::Response => 401,
                         oidc::FutureError::Encryption => {
-                            Error::new(500, "Failed to encrypt cookie")
+                            log_err!("Failed to encrypt cookie");
+                            500
                         }
                     };
                     LoginResult {
                         request,
-                        status: error.status,
-                        error: error.msg,
+                        status,
                         cookie: RustSlice::none(),
                         redirect: RustSlice::none(),
                     }
