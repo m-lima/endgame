@@ -41,8 +41,6 @@
         };
         nginx = pkgs.nginx.override {
           modules = [ module ];
-          # TODO
-          withDebug = true;
         };
         nginx-src = pkgs.stdenvNoCC.mkDerivation {
           name = "${nginx.name}-src";
@@ -87,8 +85,6 @@
                     '- $status ''${bytes_sent}b ''${request_time}s '
                     '- $http_user_agent';
                   access_log stderr main;
-                  # TODO
-                  error_log stderr debug;
 
                   server {
                     endgame on;
@@ -114,8 +110,7 @@
 
                     location /off {
                       endgame off;
-                      endgame_whitelist yo bla;
-                      endgame_whitelist ble;
+                      endgame_whitelist off;
                     }
 
                     location /diff {
