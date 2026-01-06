@@ -37,6 +37,9 @@ static char *ngx_http_endgame_conf_set_key(ngx_conf_t *cf, ngx_command_t *cmd,
 static char *ngx_http_endgame_conf_set_discovery_url(ngx_conf_t *cf,
                                                      ngx_command_t *cmd,
                                                      void *conf);
+static char *ngx_http_endgame_conf_set_whitelist(ngx_conf_t *cf,
+                                                 ngx_command_t *cmd,
+                                                 void *conf);
 
 static ngx_int_t
 ngx_http_endgame_handle_unauthed(ngx_http_request_t *r,
@@ -75,11 +78,12 @@ struct ngx_http_endgame_conf_s {
   ngx_flag_t auto_login;          /* EP: Should it try to login or return 401 */
   ngx_str_t login_control_header; /* EP: Override header for `auto_login` */
   ngx_str_t session_name;         /* All: Sesion name in cookie */
-  time_t session_ttl;             /* EP: TTL for the session cookie */
+  time_t session_ttl;             /* CB: TTL for the session cookie */
   ngx_str_t session_domain;       /* CB: Domain for the session cookie */
   ngx_str_t client_id;            /* All: OIDC client ID */
   ngx_str_t client_secret;        /* CB: OIDC client secret */
   ngx_str_t callback_url;         /* All: OIDC callback endpoint */
+  ngx_array_t *whitelist;         /* EP: Optional list of allowed users */
 
   // Internal
   ngx_flag_t key_set; /* If the key was set */
@@ -140,6 +144,11 @@ static ngx_command_t ngx_http_endgame_commands[] = {
          NGX_CONF_TAKE1,
      ngx_http_endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(ngx_http_endgame_conf_t, callback_url), NULL},
+    {ngx_string("endgame_whitelist"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_1MORE,
+     ngx_http_endgame_conf_set_whitelist, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(ngx_http_endgame_conf_t, whitelist), NULL},
     ngx_null_command};
 
 static ngx_http_module_t ngx_http_endgame_module_ctx = {
@@ -496,6 +505,7 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
   conf->auto_login = NGX_CONF_UNSET;
   conf->session_ttl = NGX_CONF_UNSET;
   conf->oidc_id = UNUSED_ID;
+  conf->whitelist = NGX_CONF_UNSET_PTR;
 
   return conf;
 }
@@ -522,6 +532,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
   ngx_conf_merge_str_value(conf->client_id, prev->client_id, "");
   ngx_conf_merge_str_value(conf->client_secret, prev->client_secret, "");
   ngx_conf_merge_str_value(conf->callback_url, prev->callback_url, "");
+  ngx_conf_merge_ptr_value(conf->whitelist, prev->whitelist, NULL);
 
   if (!conf->key_set) {
     if (prev->key_set) {
@@ -691,4 +702,39 @@ static char *ngx_http_endgame_conf_set_discovery_url(ngx_conf_t *cf,
   }
 
   return NGX_CONF_OK;
+}
+
+static char *ngx_http_endgame_conf_set_whitelist(ngx_conf_t *cf,
+                                                 ngx_command_t *cmd,
+                                                 void *conf) {
+  ngx_http_endgame_conf_t *egcf = conf;
+
+  ngx_str_t *arg = cf->args->elts;
+  arg += 1;
+
+  if (ngx_http_endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("off"))) {
+
+    if (cf->args->nelts > 2) {
+      return "must be 'off' or a list of emails, not both";
+    }
+
+    if (egcf->whitelist != NGX_CONF_UNSET_PTR) {
+      return "is duplicate";
+    }
+
+    egcf->whitelist = NULL;
+    return NGX_CONF_OK;
+  }
+
+  if (egcf->whitelist == NULL) {
+    return "is duplicate";
+  }
+
+  for (ngx_uint_t i = 0; i < cf->args->nelts; i++) {
+    if (ngx_http_endgame_ngx_str_t_eq(arg[i], (ngx_str_t)ngx_string("off"))) {
+      return "must be 'off' or a list of emails, not both";
+    }
+  }
+
+  return ngx_conf_set_str_array_slot(cf, cmd, conf);
 }

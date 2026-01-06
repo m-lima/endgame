@@ -4,18 +4,30 @@
     crane.url = "github:ipetkov/crane";
     fenix = {
       url = "github:nix-community/fenix";
-      inputs = { nixpkgs.follows = "nixpkgs"; };
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+      };
     };
     flake-utils.url = "github:numtide/flake-utils";
     treefmt-nix = {
       url = "github:numtide/treefmt-nix";
-      inputs = { nixpkgs.follows = "nixpkgs"; };
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+      };
     };
     helper.url = "github:m-lima/nix-template";
   };
 
-  outputs = { nixpkgs, fenix, flake-utils, helper, ... }@inputs:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      nixpkgs,
+      fenix,
+      flake-utils,
+      helper,
+      ...
+    }@inputs:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         module = {
@@ -96,19 +108,20 @@
                     location /on {
                       endgame on;
                       endgame_auto_login on;
-                      endgame_key file ${
-                        pkgs.writeText "mockKey"
-                        "0123456789abcdef0123456789abcdef"
-                      };
+                      endgame_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
+                      endgame_whitelist off;
                     }
 
                     location /off {
                       endgame off;
+                      endgame_whitelist yo bla;
+                      endgame_whitelist ble;
                     }
 
                     location /diff {
                       endgame on;
                       endgame_session_name diff;
+                      endgame_whitelist yo;
                     }
 
                     location /callback {
@@ -120,30 +133,35 @@
             ];
           };
         };
-        rust = (helper.lib.rust.helper inputs system ./. {
-          # TODO
-          mega = false;
-          binary = false;
-          bindgen = true;
-          buildInputs = pkgs: [ pkgs.openssl ];
-          nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
-          devPackages = let
-            policy = pkgs.writeText "policy.json"
-              ''{ "default": [ { "type": "insecureAcceptAnything" } ] }'';
-          in pkgs: [
-            pkgs.podman
-            (pkgs.writeShellScriptBin "podman-build-nix"
-              "podman build --signature-policy ${policy} $@")
-            (pkgs.writeShellScriptBin "podman-load-nix"
-              "podman load --signature-policy ${policy} $@")
-          ];
-          overrides.commonArgs = {
-            C_INCLUDE_PATH = "${nginx-src}:${./include}";
+        rust =
+          (helper.lib.rust.helper inputs system ./. {
             # TODO
-            CARGO_PROFILE = "dev";
-          };
-        }).outputs;
-      in rust // {
-        packages = rust.packages // { inherit nginx nginx-src nginx-docker; };
-      });
+            mega = false;
+            binary = false;
+            bindgen = true;
+            buildInputs = pkgs: [ pkgs.openssl ];
+            nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
+            devPackages =
+              let
+                policy = pkgs.writeText "policy.json" ''{ "default": [ { "type": "insecureAcceptAnything" } ] }'';
+              in
+              pkgs: [
+                pkgs.podman
+                (pkgs.writeShellScriptBin "podman-build-nix" "podman build --signature-policy ${policy} $@")
+                (pkgs.writeShellScriptBin "podman-load-nix" "podman load --signature-policy ${policy} $@")
+              ];
+            overrides.commonArgs = {
+              C_INCLUDE_PATH = "${nginx-src}:${./include}";
+              # TODO
+              CARGO_PROFILE = "dev";
+            };
+          }).outputs;
+      in
+      rust
+      // {
+        packages = rust.packages // {
+          inherit nginx nginx-src nginx-docker;
+        };
+      }
+    );
 }
