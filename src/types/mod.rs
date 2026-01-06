@@ -27,19 +27,19 @@ impl Timestamp {
     }
 }
 
-impl std::ops::Sub<u64> for Timestamp {
+impl std::ops::Sub<std::time::Duration> for Timestamp {
     type Output = Self;
 
-    fn sub(self, rhs: u64) -> Self::Output {
-        Self(self.0 - rhs)
+    fn sub(self, rhs: std::time::Duration) -> Self::Output {
+        Self(self.0 - rhs.as_secs())
     }
 }
 
-impl std::ops::Add<u64> for Timestamp {
+impl std::ops::Add<std::time::Duration> for Timestamp {
     type Output = Self;
 
-    fn add(self, rhs: u64) -> Self::Output {
-        Self(self.0 + rhs)
+    fn add(self, rhs: std::time::Duration) -> Self::Output {
+        Self(self.0 + rhs.as_secs())
     }
 }
 

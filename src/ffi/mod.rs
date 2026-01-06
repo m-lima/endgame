@@ -219,7 +219,7 @@ mod runtime {
         callback_url: ngx_str_t,
         session_name: ngx_str_t,
         session_domain: ngx_str_t,
-        session_ttl: i64,
+        session_ttl: u64,
         request: *const libc::c_void,
         pipe: std::os::fd::RawFd,
         pool: *mut libc::c_void,
@@ -237,6 +237,7 @@ mod runtime {
 
             let payload = match result {
                 Ok((cookie, redirect)) => {
+                    // TODO: Do we need to make this last longer so that we can use a login hint?
                     let cookie = if session_domain.is_empty() {
                         format!(
                             "{session_name}={cookie};Path=/;Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax"
@@ -294,6 +295,7 @@ mod runtime {
         let client_id = arg!(str client_id);
         let client_secret = arg!(str client_secret);
         let callback = arg!(url callback_url);
+        let session_ttl = std::time::Duration::from_secs(session_ttl);
 
         match oidc::exchange(
             query,
@@ -302,6 +304,7 @@ mod runtime {
             client_id,
             client_secret,
             callback,
+            session_ttl,
             finalizer,
         ) {
             Ok(()) => Error::none(),
@@ -316,7 +319,6 @@ mod runtime {
     pub extern "C" fn endgame_token_decrypt(
         key: Key,
         src: ngx_str_t,
-        max_age_secs: u64,
         email: &mut ngx_str_t,
         given_name: &mut ngx_str_t,
         family_name: &mut ngx_str_t,
@@ -335,10 +337,8 @@ mod runtime {
 
         let src = arg!(bytes src);
 
-        let min_timestamp = types::Timestamp::now() - max_age_secs;
-
         if let Some(token) = dencrypt::decrypt::<types::Token>(key.bytes, src)
-            .filter(|t| t.timestamp >= min_timestamp)
+            .filter(|t| t.timestamp >= types::Timestamp::now())
         {
             *email = to_str!(token.email, pool);
             *given_name = to_str!(opt token.given_name, pool);

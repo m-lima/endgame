@@ -234,8 +234,8 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
   }
 
   ngx_str_t email, given, family;
-  Error error = endgame_token_decrypt(egcf->key, value, egcf->session_ttl,
-                                      &email, &given, &family, r->pool);
+  Error error =
+      endgame_token_decrypt(egcf->key, value, &email, &given, &family, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);

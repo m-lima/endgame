@@ -70,13 +70,13 @@ fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame
                 };
                 family_name = Some(arg);
             }
-            "-a" | "--age" => {
+            "-t" | "--ttl" => {
                 let Some(arg) = args.next() else {
-                    error!("Missing timestamp parameter");
+                    error!("Missing expiry parameter");
                 };
                 let arg = match arg.parse() {
                     Ok(a) => a,
-                    Err(err) => error!("Failed do parse timestamp: '{}'", err),
+                    Err(err) => error!("Failed to parse duration: '{}'", err),
                 };
                 timestamp = Some(arg);
             }
@@ -94,7 +94,8 @@ fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame
         error!("Missing email");
     };
 
-    let timestamp = endgame::types::Timestamp::now() - timestamp.unwrap_or(0);
+    let timestamp = endgame::types::Timestamp::now()
+        + std::time::Duration::from_secs(timestamp.unwrap_or(60 * 60));
 
     (
         key,

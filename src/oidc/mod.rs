@@ -174,6 +174,7 @@ pub mod runtime {
             client_id: &str,
             client_secret: &str,
             callback: url::Url,
+            ttl: std::time::Duration,
             finalizer: F,
         ) -> Result<(), Error> {
             fn get_param<'q>(query: &'q str, param: &str) -> Option<&'q str> {
@@ -190,7 +191,8 @@ pub mod runtime {
             }
 
             // TODO
-            const FIVE_MINUTES: u64 = 60 * 5 * 100_000;
+            const FIVE_MINUTES: std::time::Duration =
+                std::time::Duration::from_secs(60 * 5 * 100_000);
 
             let state = get_param(query, "state")
                 .and_then(|s| dencrypt::decrypt::<types::State>(key, s.as_bytes()))
@@ -217,6 +219,7 @@ pub mod runtime {
                 String::from(client_id),
                 String::from(client_secret),
                 callback,
+                ttl,
                 state.nonce,
                 issuer,
                 state.redirect,
@@ -261,6 +264,7 @@ pub mod runtime {
                 client_id: String,
                 client_secret: String,
                 callback: url::Url,
+                ttl: std::time::Duration,
                 nonce: [u8; 32],
                 issuer: url::Url,
                 redirect: url::Url,
@@ -274,7 +278,9 @@ pub mod runtime {
                     grant_type: "authorization_code",
                 };
 
-                finalizer(exchange_fallible(key, endpoint, request, nonce, issuer, redirect).await);
+                finalizer(
+                    exchange_fallible(key, endpoint, request, ttl, nonce, issuer, redirect).await,
+                );
             }
 
             pub enum Error {
@@ -293,6 +299,7 @@ pub mod runtime {
                 key: crypter::Key,
                 endpoint: url::Url,
                 request: Request,
+                ttl: std::time::Duration,
                 nonce: [u8; 32],
                 issuer: url::Url,
                 redirect: url::Url,
@@ -321,7 +328,7 @@ pub mod runtime {
                     Err(Error::Response)
                 } else {
                     let token = types::Token {
-                        timestamp: types::Timestamp::now(),
+                        timestamp: types::Timestamp::now() + ttl,
                         email: jwt.email,
                         given_name: jwt.given_name,
                         family_name: jwt.family_name,
