@@ -105,18 +105,18 @@
                       endgame on;
                       endgame_auto_login on;
                       endgame_key file ${pkgs.writeText "mockKey" "0123456789abcdef0123456789abcdef"};
-                      endgame_whitelist off;
+                      endgame_whitelist yo bla ble;
                     }
 
                     location /off {
                       endgame off;
-                      endgame_whitelist off;
+                      endgame_whitelist yo;
                     }
 
                     location /diff {
                       endgame on;
                       endgame_session_name diff;
-                      endgame_whitelist yo;
+                      endgame_whitelist off;
                     }
 
                     location /callback {

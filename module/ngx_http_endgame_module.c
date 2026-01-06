@@ -257,6 +257,16 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     return ngx_http_endgame_handle_unauthed(r, egcf);
   }
 
+  if (egcf->whitelist != NULL) {
+    ngx_str_t *whitelisted = egcf->whitelist->elts;
+    for (ngx_uint_t i = 0; i < egcf->whitelist->nelts; ++i) {
+      if (ngx_http_endgame_ngx_str_t_eq(email, whitelisted[i])) {
+        return NGX_DECLINED;
+      }
+    }
+    return NGX_HTTP_FORBIDDEN;
+  }
+
   ngx_int_t result;
   result =
       ngx_http_endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), email);
@@ -710,31 +720,56 @@ static char *ngx_http_endgame_conf_set_whitelist(ngx_conf_t *cf,
   ngx_http_endgame_conf_t *egcf = conf;
 
   ngx_str_t *arg = cf->args->elts;
-  arg += 1;
 
-  if (ngx_http_endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("off"))) {
+  if (egcf->whitelist != NGX_CONF_UNSET_PTR) {
+    return "is duplicate";
+  }
 
+  // Capture `endgame_whitelist off`
+  if (ngx_http_endgame_ngx_str_t_eq(arg[1], (ngx_str_t)ngx_string("off"))) {
+
+    // `off` must be alone
     if (cf->args->nelts > 2) {
       return "must be 'off' or a list of emails, not both";
-    }
-
-    if (egcf->whitelist != NGX_CONF_UNSET_PTR) {
-      return "is duplicate";
     }
 
     egcf->whitelist = NULL;
     return NGX_CONF_OK;
   }
 
+  egcf->whitelist =
+      ngx_array_create(cf->pool, cf->args->nelts - 1, sizeof(ngx_str_t));
   if (egcf->whitelist == NULL) {
-    return "is duplicate";
+    return NGX_CONF_ERROR;
   }
 
-  for (ngx_uint_t i = 0; i < cf->args->nelts; i++) {
-    if (ngx_http_endgame_ngx_str_t_eq(arg[i], (ngx_str_t)ngx_string("off"))) {
+  // Add values that are not whitestrings
+  for (ngx_uint_t i = 1; i < cf->args->nelts; ++i) {
+    ngx_str_t value = arg[i];
+
+    // Trim it
+    endgame_ngx_str_t_trim(&value);
+
+    // If `off` is anywhere, this is invalid
+    if (ngx_http_endgame_ngx_str_t_eq(value, (ngx_str_t)ngx_string("off"))) {
       return "must be 'off' or a list of emails, not both";
     }
+
+    if (value.len == 0) {
+      continue;
+    }
+
+    ngx_str_t *s = ngx_array_push(egcf->whitelist);
+    if (s == NULL) {
+      return NGX_CONF_ERROR;
+    }
+
+    *s = value;
   }
 
-  return ngx_conf_set_str_array_slot(cf, cmd, conf);
+  if (egcf->whitelist->nelts == 0) {
+    egcf->whitelist = NULL;
+  }
+
+  return NGX_CONF_OK;
 }
