@@ -137,27 +137,18 @@ pub mod runtime {
         // Here, we build the runtime
         // It needs to live in the worker process, so that it can share memory with nginx
         // This is important for, e.g., allocating `ngx_str_t`s
-        static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| {
-            let layer = treetrace::Layer::builder(treetrace::Stderr).build();
-            let subscriber = tracing_subscriber::layer::SubscriberExt::with(
-                tracing_subscriber::registry(),
-                layer,
-            );
-            tracing::subscriber::set_global_default(subscriber).unwrap();
+        static REQUESTER: std::sync::LazyLock<Requester> = std::sync::LazyLock::new(|| Requester {
+            client: reqwest::ClientBuilder::new()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("Could not create HTTP client"),
 
-            Requester {
-                client: reqwest::ClientBuilder::new()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(std::time::Duration::from_secs(60))
-                    .build()
-                    .expect("Could not create HTTP client"),
-
-                rt: tokio::runtime::Builder::new_multi_thread()
-                    .worker_threads(1)
-                    .enable_all()
-                    .build()
-                    .expect("Could not build async runtime"),
-            }
+            rt: tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .enable_all()
+                .build()
+                .expect("Could not build async runtime"),
         });
 
         pub enum Error {
@@ -204,6 +195,7 @@ pub mod runtime {
                 .and_then(|c| String::from_utf8(c).ok())
                 .ok_or(Error::BadQueryParam)?;
 
+            // TODO: Make config fatter. Maybe put client_id and client_secret here as well?
             let configs = super::super::CONFIGS.borrow();
             let config = configs.get(oidc_id).ok_or(Error::MissingConfiguration)?;
 
