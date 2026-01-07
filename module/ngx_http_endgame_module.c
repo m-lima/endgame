@@ -54,6 +54,10 @@ static ngx_int_t ngx_http_endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right);
 static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
                                              ngx_str_t header_name,
                                              ngx_str_t header_value);
+static ngx_int_t ngx_http_endgame_set_location_header(ngx_http_request_t *r,
+                                                      ngx_str_t header_value);
+static ngx_int_t ngx_http_endgame_set_cookie_header(ngx_http_request_t *r,
+                                                    ngx_str_t header_value);
 
 static int ngx_http_endgame_pipe[2];
 static ngx_connection_t *ngx_http_endgame_dummy_conn = NULL;
@@ -311,7 +315,6 @@ static ngx_int_t ngx_http_endgame_callback(ngx_http_request_t *r,
   return NGX_DONE;
 }
 
-// TODO: Use ngx_http_endgame_set_header
 static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
   static LoginResult result;
   static size_t b;
@@ -355,35 +358,24 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
       return;
     }
 
-    ngx_table_elt_t *s_cookie = ngx_list_push(&r->headers_out.headers);
-    if (s_cookie == NULL) {
-      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "failed to allocate memory for the cookie header");
-      ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+    ngx_int_t status;
+    status = ngx_http_endgame_set_cookie_header(r, result.cookie);
+    if (status != NGX_OK) {
+      ngx_http_finalize_request(r, status);
       continue;
     }
-
-    s_cookie->hash = 1;
-    ngx_str_set(&s_cookie->key, "Set-Cookie");
-    s_cookie->value = result.cookie;
 
     if (result.redirect.data == NULL) {
       ngx_http_finalize_request(r, NGX_HTTP_OK);
       continue;
     }
 
-    ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
-    if (loc == NULL) {
-      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                    "failed to allocate memory for the location header");
-      ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
+    status = ngx_http_endgame_set_location_header(r, result.redirect);
+    if (status != NGX_OK) {
+      ngx_http_finalize_request(r, status);
       continue;
     }
 
-    loc->hash = 1;
-    ngx_str_set(&loc->key, "Location");
-    loc->value = result.redirect;
-    r->headers_out.location = loc;
     ngx_http_finalize_request(r, NGX_HTTP_MOVED_TEMPORARILY);
   }
 }
@@ -420,6 +412,39 @@ static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
   header->hash = 1;
   header->key = header_name;
   header->value = header_value;
+
+  return NGX_OK;
+}
+
+static ngx_int_t ngx_http_endgame_set_location_header(ngx_http_request_t *r,
+                                                      ngx_str_t location) {
+  ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
+  if (h == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "failed to allocate memory for the location header");
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+
+  h->hash = 1;
+  ngx_str_set(&h->key, "Location");
+  h->value = location;
+  r->headers_out.location = h;
+
+  return NGX_OK;
+}
+
+static ngx_int_t ngx_http_endgame_set_cookie_header(ngx_http_request_t *r,
+                                                    ngx_str_t cookie) {
+  ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
+  if (h == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "failed to allocate memory for the cookie header");
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+
+  h->hash = 1;
+  ngx_str_set(&h->key, "Set-Cookie");
+  h->value = cookie;
 
   return NGX_OK;
 }
@@ -502,18 +527,10 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
     return error.status;
   }
 
-  // TODO: Use ngx_http_endgame_set_header
-  ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
-  if (loc == NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "failed to allocate memory for the location header");
-    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  ngx_int_t status = ngx_http_endgame_set_location_header(r, location);
+  if (status != NGX_OK) {
+    return status;
   }
-
-  loc->hash = 1;
-  ngx_str_set(&loc->key, "Location");
-  loc->value = location;
-  r->headers_out.location = loc;
   return NGX_HTTP_MOVED_TEMPORARILY;
 }
 
