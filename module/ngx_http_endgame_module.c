@@ -357,6 +357,8 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 
     ngx_table_elt_t *s_cookie = ngx_list_push(&r->headers_out.headers);
     if (s_cookie == NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "failed to allocate memory for the cookie header");
       ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
       continue;
     }
@@ -372,6 +374,8 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
 
     ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
     if (loc == NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "failed to allocate memory for the location header");
       ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
       continue;
     }
@@ -408,7 +412,7 @@ static ngx_int_t ngx_http_endgame_set_header(ngx_http_request_t *r,
   header = ngx_list_push(&r->headers_in.headers);
   if (header == NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "Could not allocate `%V` header", &header_name);
+                  "could not allocate `%V` header", &header_name);
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
   }
 
@@ -500,6 +504,8 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
   // TODO: Use ngx_http_endgame_set_header
   ngx_table_elt_t *loc = ngx_list_push(&r->headers_out.headers);
   if (loc == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "failed to allocate memory for the location header");
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
   }
 
@@ -514,6 +520,8 @@ static void *ngx_http_endgame_create_conf(ngx_conf_t *cf) {
 
   conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_endgame_conf_t));
   if (conf == NULL) {
+    ngx_log_error(NGX_LOG_ERR, cf->log, 0,
+                  "failed to create configuration context");
     return NGX_CONF_ERROR;
   }
 
@@ -753,6 +761,7 @@ static char *ngx_http_endgame_conf_set_whitelist(ngx_conf_t *cf,
   egcf->whitelist =
       ngx_array_create(cf->pool, cf->args->nelts - 1, sizeof(ngx_str_t));
   if (egcf->whitelist == NULL) {
+    ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to allocate whitelist");
     return NGX_CONF_ERROR;
   }
 
@@ -774,6 +783,7 @@ static char *ngx_http_endgame_conf_set_whitelist(ngx_conf_t *cf,
 
     ngx_str_t *s = ngx_array_push(egcf->whitelist);
     if (s == NULL) {
+      ngx_log_error(NGX_LOG_ERR, cf->log, 0, "failed to insert into whitelist");
       return NGX_CONF_ERROR;
     }
 
