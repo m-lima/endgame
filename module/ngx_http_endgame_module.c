@@ -67,7 +67,6 @@ enum ngx_http_endgame_mode_e {
   DISABLED = 0,
   ENABLED = 1,
   CALLBACK = 2,
-  LOGOFF = 3
 };
 
 #define UNUSED_ID (size_t)-1
@@ -229,9 +228,6 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
       ngx_http_get_module_loc_conf(r, ngx_http_endgame_module);
 
   switch (egcf->mode) {
-  case LOGOFF:
-    // TODO
-    return ngx_http_endgame_callback(r, egcf);
   case CALLBACK:
     return ngx_http_endgame_callback(r, egcf);
   case ENABLED:
@@ -562,10 +558,6 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
     return "cannot have an endgame callback as a parent";
   }
 
-  if (prev->mode == LOGOFF) {
-    return "cannot have an endgame logoff as a parent";
-  }
-
   if (conf->mode == UNSET) {
     conf->mode = (prev->mode == UNSET) ? DISABLED : prev->mode;
   }
@@ -594,7 +586,7 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
     }
   }
 
-  if (conf->mode == ENABLED || conf->mode == CALLBACK || conf->mode == LOGOFF) {
+  if (conf->mode == ENABLED || conf->mode == CALLBACK) {
 #define check_missing($name)                                                   \
   if (conf->$name.len == 0)                                                    \
     return "missing endgame_$name";
@@ -633,9 +625,6 @@ static char *ngx_http_endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
   } else if (ngx_http_endgame_ngx_str_t_eq(*arg,
                                            (ngx_str_t)ngx_string("callback"))) {
     egcf->mode = CALLBACK;
-  } else if (ngx_http_endgame_ngx_str_t_eq(*arg,
-                                           (ngx_str_t)ngx_string("logoff"))) {
-    egcf->mode = LOGOFF;
   } else {
     ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", arg);
     return "should be 'on', 'off', or 'callback'";
