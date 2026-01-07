@@ -383,6 +383,7 @@ static void ngx_http_endgame_finalizer(ngx_event_t *ev) {
     loc->hash = 1;
     ngx_str_set(&loc->key, "Location");
     loc->value = result.redirect;
+    r->headers_out.location = loc;
     ngx_http_finalize_request(r, NGX_HTTP_MOVED_TEMPORARILY);
   }
 }
@@ -512,6 +513,7 @@ ngx_http_endgame_handle_redirect_login(ngx_http_request_t *r,
   loc->hash = 1;
   ngx_str_set(&loc->key, "Location");
   loc->value = location;
+  r->headers_out.location = loc;
   return NGX_HTTP_MOVED_TEMPORARILY;
 }
 
