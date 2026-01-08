@@ -265,10 +265,11 @@ static ngx_int_t ngx_http_endgame_handler(ngx_http_request_t *r) {
     ngx_str_t *whitelisted = egcf->whitelist->elts;
     for (ngx_uint_t i = 0; i < egcf->whitelist->nelts; ++i) {
       if (ngx_http_endgame_ngx_str_t_eq(email, whitelisted[i])) {
-        return NGX_DECLINED;
+        goto whitelisted;
       }
     }
     return NGX_HTTP_FORBIDDEN;
+  whitelisted:;
   }
 
   ngx_int_t result;
@@ -451,8 +452,8 @@ ngx_http_endgame_handle_unauthed(ngx_http_request_t *r,
   ngx_table_elt_t *maybe_header = ngx_http_endgame_header_find(
       &r->headers_in.headers.part, egcf->login_control_header);
 
-  // Endgame-Login: never
-  // Endgame-Login: always
+  // Endgame-AutoLogin: never
+  // Endgame-AutoLogin: always
   if (egcf->auto_login) {
     if (maybe_header != NULL &&
         !ngx_http_endgame_ngx_str_t_eq(maybe_header->value,
@@ -562,9 +563,9 @@ static char *ngx_http_endgame_merge_conf(ngx_conf_t *cf, void *parent,
     conf->mode = (prev->mode == UNSET) ? DISABLED : prev->mode;
   }
 
-  ngx_conf_merge_value(conf->auto_login, prev->auto_login, 0);
+  ngx_conf_merge_value(conf->auto_login, prev->auto_login, 1);
   ngx_conf_merge_str_value(conf->login_control_header,
-                           prev->login_control_header, "Endgame-Login");
+                           prev->login_control_header, "Endgame-AutoLogin");
   ngx_conf_merge_str_value(conf->session_name, prev->session_name, "endgame");
   ngx_conf_merge_sec_value(conf->session_ttl, prev->session_ttl, 60 * 60);
   ngx_conf_merge_str_value(conf->session_domain, prev->session_domain, "");
