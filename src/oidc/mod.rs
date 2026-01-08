@@ -181,9 +181,7 @@ pub mod runtime {
                     })
             }
 
-            // TODO
-            const FIVE_MINUTES: std::time::Duration =
-                std::time::Duration::from_secs(60 * 5 * 100_000);
+            const FIVE_MINUTES: std::time::Duration = std::time::Duration::from_secs(60 * 5);
 
             let state = get_param(query, "state")
                 .and_then(|s| dencrypt::decrypt::<types::State>(key, s.as_bytes()))
@@ -199,9 +197,7 @@ pub mod runtime {
             let configs = super::super::CONFIGS.borrow();
             let config = configs.get(oidc_id).ok_or(Error::MissingConfiguration)?;
 
-            // TODO
-            // let endpoint = config.token_endpoint.clone();
-            let endpoint = url::Url::parse("http://127.0.0.1/auth/ok").unwrap();
+            let endpoint = config.token_endpoint.clone();
             let issuer = config.issuer.clone();
 
             REQUESTER.rt.spawn(future::exchange(
