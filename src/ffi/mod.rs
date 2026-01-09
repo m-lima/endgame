@@ -124,24 +124,24 @@ mod conf {
             // TODO: Check how these errors will print
             Err(oidc::Error::BadUrl(err)) => {
                 bail!(
-                    c"client_callback_url is not a valid URL",
+                    c"does not have a valid URL for client_callback_url",
                     "Could not parse the URL",
                     err
                 )
             }
             Err(oidc::Error::UrlNotAbsolute) => {
-                bail!(c"client_callback_url is not an absolute URL")
+                bail!(c"does not have an absolute URL for client_callback_url")
             }
             Err(oidc::Error::Request(err)) => {
                 bail!(
-                    c"client_callback_url could not be fetched",
+                    c"could not fetch client_callback_url",
                     "Failed to make request",
                     err
                 )
             }
             Err(oidc::Error::BadIssuer(left, right)) => {
                 bail!(
-                    c"client_callback_url does no match the discovered issuer",
+                    c"does not match the discovered issuer",
                     "Mismatched issuer",
                     format!("{left} != {right}")
                 )
