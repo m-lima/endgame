@@ -1,4 +1,6 @@
+// TODO: These modules make it messier
 pub mod redirect {
+    use super::super::CONFIGS;
     use crate::{dencrypt, types};
 
     pub enum Error {
@@ -12,7 +14,7 @@ pub mod redirect {
         oidc_signature: u32,
         redirect: url::Url,
     ) -> Result<url::Url, Error> {
-        let configs = super::super::CONFIGS.borrow();
+        let configs = CONFIGS.borrow();
         let config = configs
             .get(oidc_id)
             .filter(|c| c.signature == oidc_signature)
@@ -45,6 +47,7 @@ pub mod redirect {
 }
 
 pub mod code {
+    use super::super::{CONFIGS, OidcConfig};
     use crate::{dencrypt, types};
 
     struct Requester {
@@ -71,9 +74,29 @@ pub mod code {
 
     pub struct BadQueryParamError;
 
-    pub use future::Error as FutureError;
+    #[derive(Debug, serde::Deserialize)]
+    struct Jwt {
+        iss: url::Url,
+        nonce: String,
+        email: String,
+        given_name: Option<String>,
+        family_name: Option<String>,
+    }
 
-    pub fn exchange<F: 'static + Send + FnOnce(Result<(String, url::Url), future::Error>)>(
+    pub enum Error {
+        MissingConfiguration,
+        Request(reqwest::Error),
+        Response,
+        Encryption,
+    }
+
+    impl Error {
+        fn response<T>(_: T) -> Self {
+            Self::Response
+        }
+    }
+
+    pub fn exchange<F: 'static + Send + FnOnce(Result<(String, url::Url), Error>)>(
         query: &str,
         master_key: crypter::Key,
         finalizer: F,
@@ -101,15 +124,42 @@ pub mod code {
             .and_then(|c| String::from_utf8(c).ok())
             .ok_or(BadQueryParamError)?;
 
-        // TODO: We can do more on this side now
-        REQUESTER.rt.spawn(future::exchange(state, code, finalizer));
+        REQUESTER
+            .rt
+            .spawn(async { finalizer(async_exchange(state, code).await) });
 
         Ok(())
     }
 
-    // TODO: This module makes even less sense
-    mod future {
-        use super::{dencrypt, types};
+    async fn async_exchange(
+        state: types::State,
+        code: String,
+    ) -> Result<(String, url::Url), Error> {
+        let configs = CONFIGS.borrow();
+        let config = configs
+            .get(state.oidc_id)
+            .filter(|c| c.signature == state.oidc_signature)
+            .ok_or(Error::MissingConfiguration)?;
+
+        let jwt = get_id_token(code, config).await.and_then(decode_token)?;
+
+        let nonce = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            state.nonce,
+        );
+
+        if jwt.iss != config.issuer || jwt.nonce != nonce || jwt.email.trim().is_empty() {
+            return Err(Error::Response);
+        }
+
+        make_cookie(jwt, config).map(|cookie| (cookie, state.redirect))
+    }
+
+    async fn get_id_token(code: String, config: &OidcConfig) -> Result<String, Error> {
+        #[derive(Debug, serde::Deserialize)]
+        struct Response {
+            id_token: String,
+        }
 
         #[derive(Debug, serde::Serialize)]
         struct Request<'a> {
@@ -120,113 +170,59 @@ pub mod code {
             grant_type: &'static str,
         }
 
-        #[derive(Debug, serde::Deserialize)]
-        struct Response {
-            id_token: String,
-        }
+        let request = Request {
+            code,
+            client_id: &config.client_id,
+            client_secret: &config.client_secret,
+            redirect_uri: &config.client_callback_url,
+            grant_type: "authorization_code",
+        };
 
-        #[derive(Debug, serde::Deserialize)]
-        struct Jwt {
-            iss: url::Url,
-            nonce: String,
-            email: String,
-            given_name: Option<String>,
-            family_name: Option<String>,
-        }
+        REQUESTER
+            .client
+            .post(config.token_endpoint.clone())
+            .form(&request)
+            .send()
+            .await
+            .map_err(Error::Request)?
+            .error_for_status()
+            .map_err(Error::response)?
+            .json::<Response>()
+            .await
+            .map_err(Error::response)
+            .map(|r| r.id_token)
+    }
 
-        pub enum Error {
-            MissingConfiguration,
-            Request(reqwest::Error),
-            Response,
-            Encryption,
-        }
-
-        impl Error {
-            fn response<T>(_: T) -> Self {
-                Self::Response
-            }
-        }
-
-        pub async fn exchange<F: FnOnce(Result<(String, url::Url), Error>)>(
-            state: types::State,
-            code: String,
-            finalizer: F,
-        ) {
-            finalizer(exchange_fallible(state, code).await);
-        }
-
-        async fn exchange_fallible(
-            state: types::State,
-            code: String,
-        ) -> Result<(String, url::Url), Error> {
-            let configs = super::super::super::CONFIGS.borrow();
-            let config = configs
-                .get(state.oidc_id)
-                .filter(|c| c.signature == state.oidc_signature)
-                .ok_or(Error::MissingConfiguration)?;
-
-            let request = Request {
-                code,
-                client_id: &config.client_id,
-                client_secret: &config.client_secret,
-                redirect_uri: &config.client_callback_url,
-                grant_type: "authorization_code",
-            };
-
-            let response = super::REQUESTER
-                .client
-                .post(config.token_endpoint.clone())
-                .form(&request)
-                .send()
-                .await
-                .map_err(Error::Request)?
-                .error_for_status()
-                .map_err(Error::response)?
-                .json::<Response>()
-                .await
+    fn decode_token(token: String) -> Result<Jwt, Error> {
+        let payload = token.split('.').nth(1).ok_or(Error::Response)?;
+        let payload =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload)
                 .map_err(Error::response)?;
+        drop(token);
+        serde_json::from_slice(&payload).map_err(Error::response)
+    }
 
-            let jwt = decode_jwt(&response.id_token)?;
+    fn make_cookie(jwt: Jwt, config: &OidcConfig) -> Result<String, Error> {
+        let cookie = dencrypt::encrypt(
+            config.key,
+            &types::Token {
+                timestamp: types::Timestamp::now() + config.session_ttl,
+                email: jwt.email,
+                given_name: jwt.given_name,
+                family_name: jwt.family_name,
+            },
+        )
+        .ok_or(Error::Encryption)?;
 
-            let nonce = base64::Engine::encode(
-                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-                state.nonce,
-            );
+        let session_domain = config
+            .session_domain
+            .as_ref()
+            .map_or_else(String::new, |d| format!("Domain={d};"));
 
-            if jwt.iss != config.issuer || jwt.nonce != nonce || jwt.email.trim().is_empty() {
-                Err(Error::Response)
-            } else {
-                let token = types::Token {
-                    timestamp: types::Timestamp::now() + config.session_ttl,
-                    email: jwt.email,
-                    given_name: jwt.given_name,
-                    family_name: jwt.family_name,
-                };
-                let cookie = dencrypt::encrypt(config.key, &token).ok_or(Error::Encryption)?;
-                // TODO: Do we need to make this last longer so that we can use a login hint?
-                let cookie = if let Some(session_domain) = config.session_domain.as_ref() {
-                    format!(
-                        "{session_name}={cookie};Path=/;Domain={session_domain};Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax",
-                        session_name = config.session_name,
-                        session_ttl = config.session_ttl.as_secs(),
-                    )
-                } else {
-                    format!(
-                        "{session_name}={cookie};Path=/;Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax",
-                        session_name = config.session_name,
-                        session_ttl = config.session_ttl.as_secs(),
-                    )
-                };
-                Ok((cookie, state.redirect))
-            }
-        }
-
-        fn decode_jwt(token: &str) -> Result<Jwt, Error> {
-            let payload = token.split('.').nth(1).ok_or(Error::Response)?;
-            let payload =
-                base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload)
-                    .map_err(Error::response)?;
-            serde_json::from_slice(&payload).map_err(Error::response)
-        }
+        Ok(format!(
+            "{session_name}={cookie};Path=/;{session_domain}Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax",
+            session_name = config.session_name,
+            session_ttl = config.session_ttl.as_secs(),
+        ))
     }
 }

@@ -280,7 +280,7 @@ mod runtime {
 
         let request = request as usize;
         let pool = pool as usize;
-        let finalizer = move |result: Result<(String, url::Url), oidc::FutureError>| {
+        let finalizer = move |result: Result<(String, url::Url), oidc::Error>| {
             let request = request as _;
             let pool = pool as _;
 
@@ -307,16 +307,16 @@ mod runtime {
                 }
                 Err(err) => {
                     let status = match err {
-                        oidc::FutureError::MissingConfiguration => {
+                        oidc::Error::MissingConfiguration => {
                             log_err!("Missing OIDC configuration for code exchange");
                             500
                         }
-                        oidc::FutureError::Request(error) => {
+                        oidc::Error::Request(error) => {
                             log_err!("Failed to make request to code exchange endpoint", error);
                             500
                         }
-                        oidc::FutureError::Response => 401,
-                        oidc::FutureError::Encryption => {
+                        oidc::Error::Response => 401,
+                        oidc::Error::Encryption => {
                             log_err!("Failed to encrypt cookie");
                             500
                         }
