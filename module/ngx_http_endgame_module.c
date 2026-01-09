@@ -553,7 +553,7 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   endgame_conf_t *conf = child;
 
   if (prev->mode == CALLBACK) {
-    return "cannot have an endgame callback as a parent";
+    return "cannot have a callback as a parent";
   }
 
   if (conf->mode == UNSET) {
@@ -611,7 +611,6 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   if (conf->oidc_ref.id == UNUSED_REF) {
     ngx_log_error(NGX_LOG_ERR, cf->log, 0,
                   "cannot have more than usize::MAX configurations");
-    // TODO: Check this error message
     return "has overflowed the number of OIDC configurations";
   }
 
