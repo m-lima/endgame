@@ -203,6 +203,7 @@ pub mod code {
                     family_name: jwt.family_name,
                 };
                 let cookie = dencrypt::encrypt(config.key, &token).ok_or(Error::Encryption)?;
+                // TODO: Do we need to make this last longer so that we can use a login hint?
                 let cookie = if let Some(session_domain) = config.session_domain.as_ref() {
                     format!(
                         "{session_name}={cookie};Path=/;Domain={session_domain};Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax",

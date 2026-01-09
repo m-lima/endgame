@@ -286,7 +286,6 @@ mod runtime {
 
             let payload = match result {
                 Ok((cookie, redirect)) => {
-                    // TODO: Do we need to make this last longer so that we can use a login hint?
                     if let Some((cookie, redirect)) = ngx_str_t::copy(cookie, pool)
                         .and_then(|c| ngx_str_t::copy(redirect, pool).map(|r| (c, r)))
                     {
