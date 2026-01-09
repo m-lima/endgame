@@ -15,6 +15,7 @@ typedef enum endgame_mode_e endgame_mode_t;
 struct endgame_conf_s;
 typedef struct endgame_conf_s endgame_conf_t;
 
+static ngx_int_t endgame_preinit(ngx_conf_t *cf);
 static ngx_int_t endgame_init(ngx_conf_t *cf);
 static ngx_int_t endgame_init_process(ngx_cycle_t *cycle);
 static ngx_int_t endgame_handler(ngx_http_request_t *r);
@@ -155,7 +156,7 @@ static ngx_command_t endgame_commands[] = {
     ngx_null_command};
 
 static ngx_http_module_t endgame_module_ctx = {
-    NULL,                /* preconfiguration */
+    endgame_preinit,     /* preconfiguration */
     endgame_init,        /* postconfiguration */
     NULL,                /* create main configuration */
     NULL,                /* init main configuration */
@@ -179,6 +180,13 @@ ngx_module_t ngx_http_endgame_module = {
     NULL,                 /* exit master */
     NGX_MODULE_V1_PADDING};
 
+static ngx_int_t endgame_preinit(ngx_conf_t *cf) {
+  ngx_log_error(NGX_LOG_WARN, cf->log, 0, "CLEAR");
+  // TODO: Check the order this is called (if ever) on reload
+  endgame_conf_clear();
+  return NGX_OK;
+}
+
 static ngx_int_t endgame_init(ngx_conf_t *cf) {
   ngx_http_core_main_conf_t *cmcf =
       ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
@@ -190,9 +198,6 @@ static ngx_int_t endgame_init(ngx_conf_t *cf) {
   }
 
   *h = endgame_handler;
-
-  // TODO: Check when this is called
-  endgame_conf_clear();
 
   return NGX_OK;
 }
@@ -525,6 +530,7 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
 }
 
 static void *endgame_create_conf(ngx_conf_t *cf) {
+  ngx_log_error(NGX_LOG_WARN, cf->log, 0, "Create config");
   endgame_conf_t *conf;
 
   conf = ngx_pcalloc(cf->pool, sizeof(endgame_conf_t));
@@ -548,7 +554,8 @@ static void *endgame_create_conf(ngx_conf_t *cf) {
 }
 
 static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
-
+  // TODO: Remove WARNs
+  ngx_log_error(NGX_LOG_WARN, cf->log, 0, "Merge config");
   endgame_conf_t *prev = parent;
   endgame_conf_t *conf = child;
 
