@@ -8,25 +8,15 @@ mod conf {
         ($err: literal) => {
             return $err.as_ptr().cast_mut()
         };
+        ($err: literal, $value: ident) => {
+            return concat!($err, " ", stringify!($value), "\0")
+                .as_ptr()
+                .cast_mut()
+                .cast()
+        };
         ($err: literal, $msg: literal, $reason: expr) => {{
             log_err!($msg, $reason);
             bail!($err);
-        }};
-    }
-
-    macro_rules! as_str {
-        ($value: ident) => {{
-            let Some(value) = $value.as_option() else {
-                bail!(c"is null");
-            };
-            let Ok(value) = str::from_utf8(value) else {
-                bail!(c"is not valid UTF-8");
-            };
-            let value = value.trim();
-            if value.is_empty() {
-                bail!(c"is empty");
-            }
-            value
         }};
     }
 
@@ -49,7 +39,17 @@ mod conf {
         path: ngx_str_t,
         key: &mut EndgameKey,
     ) -> *mut libc::c_char {
-        let path = std::path::PathBuf::from(as_str!(path));
+        let Some(path) = path.as_option() else {
+            bail!(c"is null");
+        };
+        let Ok(path) = str::from_utf8(path) else {
+            bail!(c"is not valid UTF-8");
+        };
+        let path = path.trim();
+        if path.is_empty() {
+            bail!(c"is empty");
+        }
+        let path = std::path::PathBuf::from(path);
         if !path.exists() {
             bail!(c"does not exist");
         }
@@ -87,12 +87,33 @@ mod conf {
         client_callback_url: ngx_str_t,
         oidc_ref: &mut EndgameOidc,
     ) -> *mut libc::c_char {
+        macro_rules! as_str {
+            ($value: ident) => {{
+                let Some(value) = $value.as_option() else {
+                    bail!("has null", $value);
+                };
+                let Ok(value) = str::from_utf8(value) else {
+                    bail!("has invalid UTF-8 for", $value);
+                };
+                let value = value.trim();
+                if value.is_empty() {
+                    bail!("has empty", $value);
+                }
+                value
+            }};
+        }
+
         let discovery_url = as_str!(discovery_url);
         let session_name = as_str!(session_name);
-        let session_domain = as_str!(session_domain);
         let client_id = as_str!(client_id);
         let client_secret = as_str!(client_secret);
         let client_callback_url = as_str!(client_callback_url);
+
+        let session_domain = session_domain
+            .as_option()
+            .and_then(|s| str::from_utf8(s).ok())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
 
         match oidc::push(
             key.bytes,
@@ -109,7 +130,7 @@ mod conf {
                 oidc_ref.signature = signature;
                 std::ptr::null_mut()
             }
-            // TODO: Check how these errors will print
+
             Err(oidc::Error::BadUrl(err)) => {
                 bail!(
                     c"does not have a valid URL for client_callback_url",

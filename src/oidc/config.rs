@@ -24,7 +24,7 @@ pub(crate) fn push(
     discovery_url: &str,
     session_name: &str,
     session_ttl: u64,
-    session_domain: &str,
+    session_domain: Option<&str>,
     client_id: &str,
     client_secret: &str,
     client_callback_url: &str,
@@ -49,16 +49,10 @@ pub(crate) fn push(
     let mut configs = super::CONFIGS.borrow_mut();
 
     let session_ttl = std::time::Duration::from_secs(session_ttl);
-
-    let session_domain = if session_domain.is_empty() {
-        None
-    } else {
-        Some(String::from(session_domain))
-    };
-
+    let session_domain = session_domain.map(String::from);
     let client_callback_url = url::Url::parse(client_callback_url).map_err(Error::BadUrl)?;
 
-    // TODO: Check that these match
+    // TODO: Check that these match and we are not creating many copies of the same entry
     if let Some(idx) = configs.iter().position(|c| {
         c.key == key
             && c.issuer == issuer

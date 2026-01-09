@@ -581,24 +581,24 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   ngx_conf_merge_str_value(conf->client_callback_url, prev->client_callback_url,
                            "");
 
-  if (conf->mode == ENABLED || conf->mode == CALLBACK) {
+  conf->master_key = prev->master_key;
+
+  if (conf->mode == DISABLED) {
+    return NGX_CONF_OK;
+  }
+
 #define check_missing(name)                                                    \
   if (conf->name.len == 0)                                                     \
     return "is missing endgame_" #name;
-    if (!conf->key_set) {
-      return "is missing endgame_key";
-    }
-    check_missing(discovery_url);
-    check_missing(session_name);
-    check_missing(client_id);
-    check_missing(client_secret);
-    check_missing(client_callback_url);
-#undef check_missing
+  if (!conf->key_set) {
+    return "is missing endgame_key";
   }
-
-  // TODO: Check that all have the same, and that the value is random
-  // TODO: Check that it is only created once
-  conf->master_key = prev->master_key;
+  check_missing(discovery_url);
+  check_missing(session_name);
+  check_missing(client_id);
+  check_missing(client_secret);
+  check_missing(client_callback_url);
+#undef check_missing
 
   char *error = endgame_conf_push(
       conf->key, conf->discovery_url, conf->session_name, conf->session_ttl,
