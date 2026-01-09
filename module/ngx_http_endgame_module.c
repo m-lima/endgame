@@ -582,12 +582,11 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
                            "");
 
   if (conf->mode == ENABLED || conf->mode == CALLBACK) {
-    // TODO: NOW: Check this message
-#define check_missing($name)                                                   \
-  if (conf->$name.len == 0)                                                    \
-    return "missing endgame_$name";
+#define check_missing(name)                                                    \
+  if (conf->name.len == 0)                                                     \
+    return "is missing endgame_" #name;
     if (!conf->key_set) {
-      return "missing endame_key";
+      return "is missing endgame_key";
     }
     check_missing(discovery_url);
     check_missing(session_name);
