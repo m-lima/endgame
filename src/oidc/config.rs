@@ -66,8 +66,15 @@ pub(crate) fn push(
         return Ok((idx, unsafe { configs.get_unchecked(idx).signature }));
     }
 
-    // TODO: Don't call discover if the issuer matches
-    let config = discover(discovery_url)?;
+    let config = if let Some(config) = configs.iter().find(|c| c.issuer == issuer) {
+        DiscoveryDocument {
+            issuer: issuer.clone(),
+            authorization_endpoint: config.authorization_endpoint.clone(),
+            token_endpoint: config.token_endpoint.clone(),
+        }
+    } else {
+        discover(discovery_url)?
+    };
 
     if config.issuer != issuer {
         return Err(Error::BadIssuer(
