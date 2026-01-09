@@ -1,5 +1,18 @@
-pub mod config;
-pub mod runtime;
+macro_rules! log_err {
+    ($msg: expr, $err: expr) => {
+        eprintln!(
+            concat!("[", env!("CARGO_CRATE_NAME"), "] ", $msg, ": {}"),
+            $err
+        )
+    };
+    ($msg: expr) => {
+        eprintln!(concat!("[", env!("CARGO_CRATE_NAME"), "] ", $msg))
+    };
+}
+
+mod config;
+mod ffi;
+mod runtime;
 
 // TODO: Maybe not use String and use `ngx_str_t` (need to check if the worker will barf)
 #[derive(Debug, serde::Deserialize)]

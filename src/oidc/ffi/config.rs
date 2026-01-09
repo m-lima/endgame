@@ -1,5 +1,7 @@
-use super::types::{EndgameKey, EndgameOidc, ngx_str_t};
-use crate::oidc::config as oidc;
+use super::{
+    super::config as oidc,
+    types::{EndgameKey, EndgameOidc, ngx_str_t},
+};
 
 macro_rules! bail {
     ($err: literal) => {
