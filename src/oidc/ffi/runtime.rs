@@ -171,7 +171,7 @@ pub extern "C" fn endgame_auth_exchange_token(
 
     match oidc::exchange_token(query, master_key.bytes, finalizer) {
         Ok(()) => EndgameError::none(),
-        Err(_) => EndgameError::no_msg(400),
+        Err(()) => EndgameError::no_msg(400),
     }
 }
 

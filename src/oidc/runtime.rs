@@ -1,7 +1,5 @@
 use crate::{dencrypt, types};
 
-pub struct BadQueryParamError;
-
 #[derive(Debug, serde::Deserialize)]
 struct Jwt {
     iss: url::Url,
@@ -87,7 +85,7 @@ pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Erro
     query: &str,
     master_key: crypter::Key,
     finalizer: F,
-) -> Result<(), BadQueryParamError> {
+) -> Result<(), ()> {
     fn get_param<'q>(query: &'q str, param: &str) -> Option<&'q str> {
         query
             .split('&')
@@ -104,12 +102,12 @@ pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Erro
     let state = get_param(query, "state")
         .and_then(|s| dencrypt::decrypt::<types::State>(master_key, s.as_bytes()))
         .filter(|s| s.timestamp >= types::Timestamp::now() - std::time::Duration::from_secs(60))
-        .ok_or(BadQueryParamError)?;
+        .ok_or(())?;
 
     let code = get_param(query, "code")
         .map(|c| percent_encoding::percent_decode(c.as_bytes()).collect::<Vec<_>>())
         .and_then(|c| String::from_utf8(c).ok())
-        .ok_or(BadQueryParamError)?;
+        .ok_or(())?;
 
     REQUESTER
         .rt
