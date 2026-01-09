@@ -179,8 +179,6 @@ ngx_module_t ngx_http_endgame_module = {
     NGX_MODULE_V1_PADDING};
 
 static ngx_int_t endgame_preinit(ngx_conf_t *cf) {
-  ngx_log_error(NGX_LOG_WARN, cf->log, 0, "CLEAR");
-  // TODO: Check the order this is called (if ever) on reload
   endgame_conf_clear();
   return NGX_OK;
 }
@@ -528,7 +526,6 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
 }
 
 static void *endgame_create_conf(ngx_conf_t *cf) {
-  ngx_log_error(NGX_LOG_WARN, cf->log, 0, "Create config");
   endgame_conf_t *conf;
 
   conf = ngx_pcalloc(cf->pool, sizeof(endgame_conf_t));
@@ -552,8 +549,6 @@ static void *endgame_create_conf(ngx_conf_t *cf) {
 }
 
 static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
-  // TODO: Remove WARNs
-  ngx_log_error(NGX_LOG_WARN, cf->log, 0, "Merge config");
   endgame_conf_t *prev = parent;
   endgame_conf_t *conf = child;
 

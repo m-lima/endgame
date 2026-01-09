@@ -14,7 +14,6 @@ mod config;
 mod ffi;
 mod runtime;
 
-// TODO: Check that the memory stays consistent (even on reload)
 #[derive(Debug, serde::Deserialize)]
 struct OidcConfig {
     signature: u32,

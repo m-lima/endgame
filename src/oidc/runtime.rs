@@ -58,8 +58,6 @@ pub fn get_redirect_login_url(
         .filter(|c| c.signature == oidc_signature)
         .ok_or(Error::MissingConfiguration)?;
 
-    eprintln!("Refs: {config:?}");
-
     let state = {
         let mut nonce = [0; 32];
         rand::RngCore::fill_bytes(&mut rand::rng(), &mut nonce);
