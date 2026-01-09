@@ -448,22 +448,25 @@ static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
   ngx_table_elt_t *maybe_header = endgame_header_find(
       &r->headers_in.headers.part, egcf->login_control_header);
 
+#define header_is(wanted_value)                                                \
+  (maybe_header != NULL &&                                                     \
+   endgame_ngx_str_t_eq(maybe_header->value,                                   \
+                        (ngx_str_t)ngx_string(wanted_value)))
+
   // Endgame-AutoLogin: never
   // Endgame-AutoLogin: always
   if (egcf->auto_login) {
-    if (maybe_header != NULL &&
-        !endgame_ngx_str_t_eq(maybe_header->value,
-                              (ngx_str_t)ngx_string("never"))) {
-      return endgame_handle_redirect_login(r, egcf);
+    if (header_is("never")) {
+      return NGX_HTTP_UNAUTHORIZED;
     }
+    return endgame_handle_redirect_login(r, egcf);
   } else {
-    if (maybe_header != NULL &&
-        endgame_ngx_str_t_eq(maybe_header->value,
-                             (ngx_str_t)ngx_string("always"))) {
+    if (header_is("always")) {
       return endgame_handle_redirect_login(r, egcf);
     }
+    return NGX_HTTP_UNAUTHORIZED;
   }
-  return NGX_HTTP_UNAUTHORIZED;
+#undef header_is
 }
 
 static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
