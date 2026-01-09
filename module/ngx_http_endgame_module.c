@@ -2,9 +2,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-// TODO
-// #include <endgame.h>
-#include "../include/endgame.h"
+#include <endgame.h>
 
 #include <limits.h>
 #include <stdio.h>

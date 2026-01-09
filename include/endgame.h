@@ -24,8 +24,6 @@ typedef struct EndgameResult {
   ngx_str_t redirect;
 } EndgameResult;
 
-void endgame_ngx_str_t_trim(ngx_str_t *string);
-
 void endgame_conf_clear(void);
 
 struct EndgameKey endgame_conf_random_key(void);
@@ -61,3 +59,5 @@ struct EndgameError endgame_token_decrypt(struct EndgameKey key,
                                           ngx_str_t *given_name,
                                           ngx_str_t *family_name,
                                           void *pool);
+
+void endgame_ngx_str_t_trim(ngx_str_t *string);
