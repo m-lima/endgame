@@ -14,7 +14,7 @@ mod config;
 mod ffi;
 mod runtime;
 
-// TODO: Maybe not use String and use `ngx_str_t` (need to check if the worker will barf)
+// TODO: Check that the memory stays consistent (even on reload)
 #[derive(Debug, serde::Deserialize)]
 struct OidcConfig {
     signature: u32,
@@ -22,11 +22,11 @@ struct OidcConfig {
     issuer: url::Url,
     authorization_endpoint: url::Url,
     token_endpoint: url::Url,
-    session_name: String,
+    session_name: &'static str,
     session_ttl: std::time::Duration,
-    session_domain: Option<String>,
-    client_id: String,
-    client_secret: String,
+    session_domain: Option<&'static str>,
+    client_id: &'static str,
+    client_secret: &'static str,
     client_callback_url: url::Url,
 }
 
@@ -38,11 +38,11 @@ impl OidcConfig {
         issuer: url::Url,
         authorization_endpoint: url::Url,
         token_endpoint: url::Url,
-        session_name: String,
+        session_name: &'static str,
         session_ttl: std::time::Duration,
-        session_domain: Option<String>,
-        client_id: String,
-        client_secret: String,
+        session_domain: Option<&'static str>,
+        client_id: &'static str,
+        client_secret: &'static str,
         client_callback_url: url::Url,
     ) -> Self {
         Self {

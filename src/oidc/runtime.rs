@@ -58,6 +58,8 @@ pub fn get_redirect_login_url(
         .filter(|c| c.signature == oidc_signature)
         .ok_or(Error::MissingConfiguration)?;
 
+    eprintln!("Refs: {config:?}");
+
     let state = {
         let mut nonce = [0; 32];
         rand::RngCore::fill_bytes(&mut rand::rng(), &mut nonce);
@@ -73,7 +75,7 @@ pub fn get_redirect_login_url(
 
     let mut url = config.authorization_endpoint.clone();
     url.query_pairs_mut()
-        .append_pair("client_id", &config.client_id)
+        .append_pair("client_id", config.client_id)
         .append_pair("response_type", "code")
         .append_pair("scope", "openid email profile")
         .append_pair("redirect_uri", config.client_callback_url.as_str())
@@ -156,8 +158,8 @@ async fn get_id_token(code: String, config: &super::OidcConfig) -> Result<String
 
     let request = Request {
         code,
-        client_id: &config.client_id,
-        client_secret: &config.client_secret,
+        client_id: config.client_id,
+        client_secret: config.client_secret,
         redirect_uri: &config.client_callback_url,
         grant_type: "authorization_code",
     };

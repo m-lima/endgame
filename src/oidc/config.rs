@@ -22,12 +22,12 @@ pub fn clear() {
 pub(crate) fn push(
     key: crypter::Key,
     discovery_url: &str,
-    session_name: &str,
+    session_name: &'static str,
     session_ttl: u64,
-    session_domain: Option<&str>,
-    client_id: &str,
-    client_secret: &str,
-    client_callback_url: &str,
+    session_domain: Option<&'static str>,
+    client_id: &'static str,
+    client_secret: &'static str,
+    client_callback_url: &'static str,
 ) -> Result<(usize, u32), Error> {
     const DISCOVERY_SUFFIX: &str = "/.well-known/openid-configuration";
 
@@ -49,7 +49,6 @@ pub(crate) fn push(
     let mut configs = super::CONFIGS.borrow_mut();
 
     let session_ttl = std::time::Duration::from_secs(session_ttl);
-    let session_domain = session_domain.map(String::from);
     let client_callback_url = url::Url::parse(client_callback_url).map_err(Error::BadUrl)?;
 
     if let Some(idx) = configs.iter().position(|c| {
@@ -88,11 +87,11 @@ pub(crate) fn push(
         issuer,
         config.authorization_endpoint,
         config.token_endpoint,
-        String::from(session_name),
+        session_name,
         session_ttl,
         session_domain,
-        String::from(client_id),
-        String::from(client_secret),
+        client_id,
+        client_secret,
         client_callback_url,
     );
     let id = configs.len();
