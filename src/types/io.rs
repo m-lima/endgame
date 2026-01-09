@@ -96,4 +96,4 @@ macro_rules! impl_io_num {
     }
 }
 
-impl_io_num!(u64, usize);
+impl_io_num!(u64, u32, usize);

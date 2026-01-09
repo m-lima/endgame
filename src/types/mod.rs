@@ -104,15 +104,25 @@ pub struct State {
     pub nonce: [u8; 32],
     pub timestamp: Timestamp,
     pub redirect: url::Url,
+    pub oidc_id: usize,
+    pub oidc_signature: u32,
 }
 
 impl State {
     #[must_use]
-    pub fn new(nonce: [u8; 32], timestamp: Timestamp, redirect: url::Url) -> Self {
+    pub fn new(
+        nonce: [u8; 32],
+        timestamp: Timestamp,
+        redirect: url::Url,
+        oidc_id: usize,
+        oidc_signature: u32,
+    ) -> Self {
         Self {
             nonce,
             timestamp,
             redirect,
+            oidc_id,
+            oidc_signature,
         }
     }
 }
@@ -136,11 +146,15 @@ impl io::In for State {
         let redirect = Option::read(reader)?
             .and_then(|ref u| url::Url::parse(u).ok())
             .ok_or(std::io::ErrorKind::InvalidData)?;
+        let oidc_id = usize::read(reader)?;
+        let oidc_signature = u32::read(reader)?;
 
         Ok(Self {
             nonce,
             timestamp,
             redirect,
+            oidc_id,
+            oidc_signature,
         })
     }
 }

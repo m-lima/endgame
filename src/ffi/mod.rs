@@ -13,7 +13,7 @@ macro_rules! log_err {
 }
 
 mod conf {
-    use super::types::{Key, ngx_str_t};
+    use super::types::{EndgameKey, EndgameOidc, ngx_str_t};
     use crate::oidc::config as oidc;
 
     macro_rules! bail {
@@ -43,7 +43,24 @@ mod conf {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_conf_load_key(path: ngx_str_t, key: &mut Key) -> *mut libc::c_char {
+    pub extern "C" fn endgame_conf_clear() {
+        oidc::clear();
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn endgame_conf_random_key() -> EndgameKey {
+        let mut key = EndgameKey {
+            bytes: Default::default(),
+        };
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut key.bytes);
+        key
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn endgame_conf_load_key(
+        path: ngx_str_t,
+        key: &mut EndgameKey,
+    ) -> *mut libc::c_char {
         let path = std::path::PathBuf::from(as_str!(path));
         if !path.exists() {
             bail!(c"does not exist");
@@ -71,29 +88,60 @@ mod conf {
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_conf_oidc_discover(
+    pub extern "C" fn endgame_conf_push(
+        key: EndgameKey,
         discovery_url: ngx_str_t,
-        oidc_id: &mut usize,
+        session_name: ngx_str_t,
+        session_ttl: u64,
+        session_domain: ngx_str_t,
+        client_id: ngx_str_t,
+        client_secret: ngx_str_t,
+        client_callback_url: ngx_str_t,
+        oidc_ref: &mut EndgameOidc,
     ) -> *mut libc::c_char {
         let discovery_url = as_str!(discovery_url);
+        let session_name = as_str!(session_name);
+        let session_domain = as_str!(session_domain);
+        let client_id = as_str!(client_id);
+        let client_secret = as_str!(client_secret);
+        let client_callback_url = as_str!(client_callback_url);
 
-        match oidc::discover(discovery_url) {
-            Ok(id) => {
-                *oidc_id = id;
+        match oidc::push(
+            key.bytes,
+            discovery_url,
+            session_name,
+            session_ttl,
+            session_domain,
+            client_id,
+            client_secret,
+            client_callback_url,
+        ) {
+            Ok((id, signature)) => {
+                oidc_ref.id = id;
+                oidc_ref.signature = signature;
                 std::ptr::null_mut()
             }
+            // TODO: Check how these errors will print
             Err(oidc::Error::BadUrl(err)) => {
-                bail!(c"is not a valid URL", "Could not parse the URL", err)
+                bail!(
+                    c"client_callback_url is not a valid URL",
+                    "Could not parse the URL",
+                    err
+                )
             }
             Err(oidc::Error::UrlNotAbsolute) => {
-                bail!(c"is not an absolute URL")
+                bail!(c"client_callback_url is not an absolute URL")
             }
             Err(oidc::Error::Request(err)) => {
-                bail!(c"could not be fetched", "Failed to make request", err)
+                bail!(
+                    c"client_callback_url could not be fetched",
+                    "Failed to make request",
+                    err
+                )
             }
             Err(oidc::Error::BadIssuer(left, right)) => {
                 bail!(
-                    c"does no match the discovered issuer",
+                    c"client_callback_url does no match the discovered issuer",
                     "Mismatched issuer",
                     format!("{left} != {right}")
                 )
@@ -103,12 +151,12 @@ mod conf {
 }
 
 mod runtime {
-    use super::types::{Error, Key, ngx_str_t};
+    use super::types::{EndgameError, EndgameKey, ngx_str_t};
     use crate::{dencrypt, types};
 
     macro_rules! bail {
         ($name: ident, $problem: literal) => {
-            return crate::ffi::types::Error::new(
+            return crate::ffi::types::EndgameError::new(
                 500,
                 concat!("Parameter `", stringify!($name), "` is ", $problem),
             )
@@ -159,7 +207,7 @@ mod runtime {
         ($value: expr, $pool: ident) => {
             match ngx_str_t::copy($value, $pool) {
                 Some(v) => v,
-                None => return Error::new(500, "Failed to allocate return value"),
+                None => return EndgameError::new(500, "Failed to allocate return value"),
             }
         };
         (opt $value: expr, $pool: ident) => {
@@ -172,19 +220,15 @@ mod runtime {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn endgame_auth_redirect_login_url(
-        key: Key,
-        oidc_id: usize,
-        client_id: ngx_str_t,
-        callback_url: ngx_str_t,
+        master_key: EndgameKey,
+        oidc_ref: super::types::EndgameOidc,
         redirect_host: ngx_str_t,
         redirect_path: ngx_str_t,
         login_url: &mut ngx_str_t,
         pool: *mut libc::c_void,
-    ) -> Error {
+    ) -> EndgameError {
         use crate::oidc::runtime::redirect as oidc;
 
-        let client_id = arg!(str client_id);
-        let callback_url = arg!(url callback_url);
         let redirect = {
             let host = arg!(str redirect_host);
             let path = arg!(str redirect_path);
@@ -192,43 +236,39 @@ mod runtime {
                 Ok(url) => url,
                 Err(err) => {
                     log_err!("The constructed redirect URL is not valid", err);
-                    return Error::new(500, "The constructed redirect URL is not valid");
+                    return EndgameError::new(500, "The constructed redirect URL is not valid");
                 }
             }
         };
 
-        match oidc::get_redirect_login_url(key.bytes, oidc_id, client_id, &callback_url, redirect) {
+        match oidc::get_redirect_login_url(
+            master_key.bytes,
+            oidc_ref.id,
+            oidc_ref.signature,
+            redirect,
+        ) {
             Ok(url) => {
                 *login_url = to_str!(url, pool);
-                Error::none()
+                EndgameError::none()
             }
             Err(oidc::Error::MissingConfiguration) => {
-                Error::new(500, "Missing OIDC configuration for redirection")
+                EndgameError::new(500, "Missing OIDC configuration for redirection")
             }
-            Err(oidc::Error::Encryption) => Error::new(500, "Failed to encrypt state"),
+            Err(oidc::Error::Encryption) => EndgameError::new(500, "Failed to encrypt state"),
         }
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn endgame_auth_exchange_token(
+        master_key: EndgameKey,
         query: ngx_str_t,
-        key: Key,
-        oidc_id: usize,
-        client_id: ngx_str_t,
-        client_secret: ngx_str_t,
-        callback_url: ngx_str_t,
-        session_name: ngx_str_t,
-        session_domain: ngx_str_t,
-        session_ttl: u64,
         request: *const libc::c_void,
         pipe: std::os::fd::RawFd,
         pool: *mut libc::c_void,
-    ) -> Error {
-        use super::types::LoginResult;
+    ) -> EndgameError {
+        use super::types::EndgameResult;
         use crate::oidc::runtime::code as oidc;
 
-        let session_name = arg!(str session_name);
-        let session_domain = arg!(str session_domain);
         let request = request as usize;
         let pool = pool as usize;
         let finalizer = move |result: Result<(String, url::Url), oidc::FutureError>| {
@@ -238,19 +278,10 @@ mod runtime {
             let payload = match result {
                 Ok((cookie, redirect)) => {
                     // TODO: Do we need to make this last longer so that we can use a login hint?
-                    let cookie = if session_domain.is_empty() {
-                        format!(
-                            "{session_name}={cookie};Path=/;Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax"
-                        )
-                    } else {
-                        format!(
-                            "{session_name}={cookie};Path=/;Domain={session_domain};Max-Age={session_ttl};Secure;HttpOnly;SameSite=lax"
-                        )
-                    };
                     if let Some((cookie, redirect)) = ngx_str_t::copy(cookie, pool)
                         .and_then(|c| ngx_str_t::copy(redirect, pool).map(|r| (c, r)))
                     {
-                        LoginResult {
+                        EndgameResult {
                             request,
                             status: 0,
                             cookie,
@@ -258,7 +289,7 @@ mod runtime {
                         }
                     } else {
                         log_err!("Failed to allocate return value");
-                        LoginResult {
+                        EndgameResult {
                             request,
                             status: 500,
                             cookie: ngx_str_t::none(),
@@ -268,6 +299,10 @@ mod runtime {
                 }
                 Err(err) => {
                     let status = match err {
+                        oidc::FutureError::MissingConfiguration => {
+                            log_err!("Missing OIDC configuration for code exchange");
+                            500
+                        }
                         oidc::FutureError::Request(error) => {
                             log_err!("Failed to make request to code exchange endpoint", error);
                             500
@@ -278,7 +313,7 @@ mod runtime {
                             500
                         }
                     };
-                    LoginResult {
+                    EndgameResult {
                         request,
                         status,
                         cookie: ngx_str_t::none(),
@@ -288,42 +323,26 @@ mod runtime {
             };
 
             let data = std::ptr::from_ref(&payload).cast();
-            unsafe { libc::write(pipe, data, size_of::<LoginResult>()) };
+            unsafe { libc::write(pipe, data, size_of::<EndgameResult>()) };
         };
 
         let query = arg!(str query);
-        let client_id = arg!(str client_id);
-        let client_secret = arg!(str client_secret);
-        let callback = arg!(url callback_url);
-        let session_ttl = std::time::Duration::from_secs(session_ttl);
 
-        match oidc::exchange(
-            query,
-            key.bytes,
-            oidc_id,
-            client_id,
-            client_secret,
-            callback,
-            session_ttl,
-            finalizer,
-        ) {
-            Ok(()) => Error::none(),
-            Err(oidc::Error::MissingConfiguration) => {
-                Error::new(500, "Missing OIDC configuration for redirection")
-            }
-            Err(oidc::Error::BadQueryParam) => Error::no_msg(400),
+        match oidc::exchange(query, master_key.bytes, finalizer) {
+            Ok(()) => EndgameError::none(),
+            Err(_) => EndgameError::no_msg(400),
         }
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn endgame_token_decrypt(
-        key: Key,
+        key: EndgameKey,
         src: ngx_str_t,
         email: &mut ngx_str_t,
         given_name: &mut ngx_str_t,
         family_name: &mut ngx_str_t,
         pool: *mut libc::c_void,
-    ) -> Error {
+    ) -> EndgameError {
         macro_rules! nullify {
             ($value: ident) => {
                 if !$value.is_null() {
@@ -345,6 +364,6 @@ mod runtime {
             *family_name = to_str!(opt token.family_name, pool);
         }
 
-        Error::none()
+        EndgameError::none()
     }
 }

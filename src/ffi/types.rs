@@ -49,20 +49,27 @@ impl ngx_str_t {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct Key {
+pub struct EndgameKey {
     pub bytes: [u8; 32],
 }
 
-impl From<crypter::Key> for Key {
+impl From<crypter::Key> for EndgameKey {
     fn from(bytes: crypter::Key) -> Self {
         Self { bytes }
     }
 }
 
-impl From<Key> for crypter::Key {
-    fn from(value: Key) -> Self {
+impl From<EndgameKey> for crypter::Key {
+    fn from(value: EndgameKey) -> Self {
         value.bytes
     }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct EndgameOidc {
+    pub id: usize,
+    pub signature: u32,
 }
 
 impl ngx_str_t {
@@ -87,12 +94,12 @@ impl ngx_str_t {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct Error {
+pub struct EndgameError {
     pub status: u16,
     pub msg: ngx_str_t,
 }
 
-impl Error {
+impl EndgameError {
     pub const fn new(status: u16, msg: &'static str) -> Self {
         Self {
             status,
@@ -114,7 +121,7 @@ impl Error {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct LoginResult {
+pub struct EndgameResult {
     pub request: *const libc::c_void,
     pub status: u16,
     pub cookie: ngx_str_t,
