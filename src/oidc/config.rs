@@ -52,7 +52,6 @@ pub(crate) fn push(
     let session_domain = session_domain.map(String::from);
     let client_callback_url = url::Url::parse(client_callback_url).map_err(Error::BadUrl)?;
 
-    // TODO: Check that these match and we are not creating many copies of the same entry
     if let Some(idx) = configs.iter().position(|c| {
         c.key == key
             && c.issuer == issuer
