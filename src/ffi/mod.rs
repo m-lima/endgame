@@ -1,17 +1,5 @@
 mod types;
 
-macro_rules! log_err {
-    ($msg: expr, $err: expr) => {
-        eprintln!(
-            concat!("[", env!("CARGO_CRATE_NAME"), "] ", $msg, ": {}"),
-            $err
-        )
-    };
-    ($msg: expr) => {
-        eprintln!(concat!("[", env!("CARGO_CRATE_NAME"), "] ", $msg))
-    };
-}
-
 mod conf {
     use super::types::{EndgameKey, EndgameOidc, ngx_str_t};
     use crate::oidc::config as oidc;

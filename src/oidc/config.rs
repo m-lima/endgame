@@ -106,7 +106,7 @@ fn discover(discovery_url: url::Url) -> Result<DiscoveryDocument, Error> {
     macro_rules! bad_request {
         ($msg: literal) => {{
             |e| {
-                eprintln!(concat!($msg, ": {:?}"), e);
+                log_err!($msg, e);
                 Error::Request(Box::new(e))
             }
         }};
