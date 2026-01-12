@@ -61,17 +61,11 @@
             bindgen = true;
             buildInputs = pkgs: [ pkgs.openssl ];
             nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
-            overrides.commonArgs = {
+            overrides.devShell = {
               C_INCLUDE_PATH = "${nginx-headers}:${./include}";
             };
           }).outputs;
       in
-      rust
-      // {
-        packages = rust.packages // {
-          module = module;
-          bin = rust.packages.default;
-        };
-      }
+      rust // { module = module; }
     );
 }
