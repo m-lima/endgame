@@ -207,3 +207,27 @@ fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {
         session_ttl = config.session_ttl.as_secs(),
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::random_array;
+
+    #[test]
+    fn state_round_trip() {
+        let state = types::State {
+            nonce: random_array(),
+            timestamp: types::Timestamp::now(),
+            redirect: url::Url::parse("http://localhost").unwrap(),
+            oidc_id: usize::from_ne_bytes(random_array()),
+            oidc_signature: rand::random(),
+        };
+
+        let key = random_array();
+
+        let encrypted = dencrypt::encrypt(key, &state).unwrap();
+        let decrypted = dencrypt::decrypt::<types::State>(key, encrypted.as_bytes()).unwrap();
+
+        assert_eq!(state, decrypted);
+    }
+}
