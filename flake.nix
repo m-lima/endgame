@@ -36,7 +36,10 @@
             description = "OpenIDC handler for nginx";
             license = [ pkgs.lib.licenses.mit ];
           };
-          inputs = [ rust.packages.default ];
+          inputs = [
+            rust.packages.default
+            pkgs.pkg-config
+          ];
           src = ./module;
         };
         nginx-headers = pkgs.stdenvNoCC.mkDerivation {
