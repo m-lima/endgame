@@ -58,6 +58,7 @@ struct EndgameError endgame_token_decrypt(struct EndgameKey key,
                                           ngx_str_t *email,
                                           ngx_str_t *given_name,
                                           ngx_str_t *family_name,
+                                          ngx_str_t *picture,
                                           void *pool);
 
 void endgame_ngx_str_t_trim(ngx_str_t *string);

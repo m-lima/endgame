@@ -65,6 +65,7 @@ pub struct Token {
     pub email: String,
     pub given_name: Option<String>,
     pub family_name: Option<String>,
+    pub picture: Option<String>,
 }
 
 impl io::Out for Token {
@@ -73,13 +74,15 @@ impl io::Out for Token {
             + self.email.size()
             + self.given_name.as_deref().size()
             + self.family_name.as_deref().size()
+            + self.picture.as_deref().size()
     }
 
     fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         self.timestamp.write(writer)?;
         self.email.write(writer)?;
         self.given_name.as_deref().write(writer)?;
-        self.family_name.as_deref().write(writer)
+        self.family_name.as_deref().write(writer)?;
+        self.picture.as_deref().write(writer)
     }
 }
 
@@ -89,12 +92,14 @@ impl io::In for Token {
         let email = Option::read(reader)?.ok_or(std::io::ErrorKind::InvalidData)?;
         let given_name = Option::read(reader)?;
         let family_name = Option::read(reader)?;
+        let picture = Option::read(reader)?;
 
         Ok(Self {
             timestamp,
             email,
             given_name,
             family_name,
+            picture,
         })
     }
 }
@@ -187,6 +192,7 @@ mod tests {
                 email: String::from("email"),
                 given_name: None,
                 family_name: Some(String::from("given")),
+                picture: Some(String::from("pic")),
             };
             let recovered = round_trip(&original).unwrap();
             assert_eq!(original, recovered);

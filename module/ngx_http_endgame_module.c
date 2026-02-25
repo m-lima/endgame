@@ -248,9 +248,9 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
     return endgame_handle_unauthed(r, egcf);
   }
 
-  ngx_str_t email, given, family;
-  EndgameError error =
-      endgame_token_decrypt(egcf->key, value, &email, &given, &family, r->pool);
+  ngx_str_t email, given, family, picture;
+  EndgameError error = endgame_token_decrypt(egcf->key, value, &email, &given,
+                                             &family, &picture, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);
@@ -287,6 +287,11 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
 
   result =
       endgame_set_header(r, (ngx_str_t)ngx_string("X-Family-Name"), family);
+  if (result != NGX_OK) {
+    return result;
+  }
+
+  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Picture"), picture);
   if (result != NGX_OK) {
     return result;
   }

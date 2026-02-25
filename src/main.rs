@@ -1,14 +1,15 @@
 fn help<O: std::io::Write>(mut output: O) {
-    let _ = writeln!(output, "Usage: engame <ARGS..> [EXTRAS..]");
+    let _ = writeln!(output, "Usage: engame  <ARGS..> [EXTRAS..]");
     let _ = writeln!(output);
     let _ = writeln!(output, "ARGS:");
-    let _ = writeln!(output, "  -k --key     Key in base64 format");
-    let _ = writeln!(output, "  -e --email   Email to encrypt");
+    let _ = writeln!(output, "  -k --key      Key in base64 format");
+    let _ = writeln!(output, "  -e --email    Email to encrypt");
     let _ = writeln!(output);
     let _ = writeln!(output, "EXTRAS:");
-    let _ = writeln!(output, "  -g --given   Given name to encrypt");
-    let _ = writeln!(output, "  -f --family  Family name to encrypt");
-    let _ = writeln!(output, "  -a --age     Age in seconds of the token");
+    let _ = writeln!(output, "  -g --given    Given name to encrypt");
+    let _ = writeln!(output, "  -f --family   Family name to encrypt");
+    let _ = writeln!(output, "  -p --picture  Picture URL to encrypt");
+    let _ = writeln!(output, "  -a --age      Age in seconds of the token");
 }
 
 fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame::types::Token) {
@@ -28,6 +29,7 @@ fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame
     let mut email = None;
     let mut given_name = None;
     let mut family_name = None;
+    let mut picture = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -70,6 +72,12 @@ fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame
                 };
                 family_name = Some(arg);
             }
+            "-p" | "--picture" => {
+                let Some(arg) = args.next() else {
+                    error!("Missing picture URL parameter");
+                };
+                picture = Some(arg);
+            }
             "-t" | "--ttl" => {
                 let Some(arg) = args.next() else {
                     error!("Missing expiry parameter");
@@ -104,6 +112,7 @@ fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame
             email,
             given_name,
             family_name,
+            picture,
         },
     )
 }

@@ -182,6 +182,7 @@ pub extern "C" fn endgame_token_decrypt(
     email: &mut ngx_str_t,
     given_name: &mut ngx_str_t,
     family_name: &mut ngx_str_t,
+    picture: &mut ngx_str_t,
     pool: *mut libc::c_void,
 ) -> EndgameError {
     macro_rules! nullify {
@@ -194,6 +195,7 @@ pub extern "C" fn endgame_token_decrypt(
     nullify!(email);
     nullify!(given_name);
     nullify!(family_name);
+    nullify!(picture);
 
     let src = arg!(bytes src);
 
@@ -203,6 +205,7 @@ pub extern "C" fn endgame_token_decrypt(
         *email = to_str!(token.email, pool);
         *given_name = to_str!(opt token.given_name, pool);
         *family_name = to_str!(opt token.family_name, pool);
+        *picture = to_str!(opt token.picture, pool);
     }
 
     EndgameError::none()

@@ -7,6 +7,7 @@ struct Jwt {
     email: String,
     given_name: Option<String>,
     family_name: Option<String>,
+    picture: Option<String>,
 }
 
 pub enum Error {
@@ -192,6 +193,7 @@ fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {
             email: jwt.email,
             given_name: jwt.given_name,
             family_name: jwt.family_name,
+            picture: jwt.picture,
         },
     )
     .ok_or(Error::Encryption)?;
