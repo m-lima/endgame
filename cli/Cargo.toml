@@ -1,0 +1,9 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+crypter = { workspace = true }
+endgame = { path = "../endgame" }
+base64 = { workspace = true }

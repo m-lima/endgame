@@ -116,6 +116,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cli"
+version = "0.2.0"
+dependencies = [
+ "base64",
+ "crypter",
+ "endgame",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -194,19 +203,11 @@ dependencies = [
 
 [[package]]
 name = "endgame"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
- "atomic_refcell",
  "base64",
  "crypter",
- "libc",
- "percent-encoding",
  "rand",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
- "url",
 ]
 
 [[package]]
@@ -689,6 +690,24 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nginx"
+version = "0.2.0"
+dependencies = [
+ "atomic_refcell",
+ "base64",
+ "crypter",
+ "endgame",
+ "libc",
+ "percent-encoding",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

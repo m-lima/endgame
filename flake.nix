@@ -37,10 +37,10 @@
             license = [ pkgs.lib.licenses.mit ];
           };
           inputs = [
-            rust.packages.default
+            nginx.outputs.packages.default
             pkgs.pkg-config
           ];
-          src = ./module;
+          src = ./nginx/module;
         };
         nginx-headers = pkgs.stdenvNoCC.mkDerivation {
           name = "${pkgs.nginx.name}-headers";
@@ -58,17 +58,42 @@
             touch "$out/ngx_auto_headers.h"
           '';
         };
-        rust =
-          (helper.lib.rust.helper inputs system ./. {
-            binary = false;
-            bindgen = true;
-            buildInputs = pkgs: [ pkgs.openssl ];
-            nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
-            overrides.devShell = {
-              C_INCLUDE_PATH = "${nginx-headers}:${./include}";
-            };
-          }).outputs;
+        rustOptions = {
+          binary = false;
+          bindgen = true;
+          buildInputs = pkgs: [ pkgs.openssl ];
+          nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
+          formatters = {
+            clang-format.enable = true;
+            mdformat.enable = true;
+          };
+          fmtExcludes = [
+            "nginx/module/config"
+          ];
+          overrides.devShell = {
+            C_INCLUDE_PATH = "${nginx-headers}:${./nginx/include}";
+          };
+        };
+        all = helper.lib.rust.helper inputs system ./. rustOptions;
+        cli = helper.lib.rust.helper inputs system ./. (
+          rustOptions
+          // {
+            binary = true;
+            overrides.mainArgs.cargoExtraArgs = "-p cli";
+          }
+        );
+        nginx = helper.lib.rust.helper inputs system ./. (
+          rustOptions // { overrides.mainArgs.cargoExtraArgs = "-p nginx"; }
+        );
       in
-      rust // { module = module; }
+      all.outputs
+      // {
+        inherit module;
+        packages = {
+          cli = cli.outputs.packages.default;
+          nginx = nginx.outputs.packages.default;
+        };
+        apps.default = cli.outputs.apps.default;
+      }
     );
 }

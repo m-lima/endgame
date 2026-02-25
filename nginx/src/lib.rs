@@ -1,3 +1,6 @@
+#![warn(clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+
 macro_rules! log_err {
     ($msg: expr, $err: expr) => {
         eprintln!(

@@ -1,0 +1,11 @@
+[package]
+name = "endgame"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+crypter = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }

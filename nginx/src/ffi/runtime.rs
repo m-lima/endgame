@@ -2,11 +2,10 @@ use super::{
     super::runtime as oidc,
     types::{EndgameError, EndgameKey, EndgameResult, ngx_str_t},
 };
-use crate::{dencrypt, types};
 
 macro_rules! bail {
     ($name: ident, $problem: literal) => {
-        return crate::oidc::ffi::types::EndgameError::new(
+        return crate::ffi::types::EndgameError::new(
             500,
             concat!("Parameter `", stringify!($name), "` is ", $problem),
         )
@@ -199,8 +198,8 @@ pub extern "C" fn endgame_token_decrypt(
 
     let src = arg!(bytes src);
 
-    if let Some(token) = dencrypt::decrypt::<types::Token>(key.bytes, src)
-        .filter(|t| t.timestamp >= types::Timestamp::now())
+    if let Some(token) = endgame::dencrypt::decrypt::<endgame::types::Token>(key.bytes, src)
+        .filter(|t| t.timestamp >= endgame::types::Timestamp::now())
     {
         *email = to_str!(token.email, pool);
         *given_name = to_str!(opt token.given_name, pool);

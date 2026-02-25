@@ -1,4 +1,4 @@
-use crate::{dencrypt, types};
+mod types;
 
 #[derive(Debug, serde::Deserialize)]
 struct Jwt {
@@ -60,7 +60,7 @@ pub fn get_redirect_login_url(
     let state = {
         let mut nonce = [0; 32];
         rand::RngCore::fill_bytes(&mut rand::rng(), &mut nonce);
-        let timestamp = types::Timestamp::now();
+        let timestamp = endgame::types::Timestamp::now();
 
         types::State::new(nonce, timestamp, redirect, oidc_id, oidc_signature)
     };
@@ -68,7 +68,7 @@ pub fn get_redirect_login_url(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
         state.nonce,
     );
-    let state = dencrypt::encrypt(master_key, &state).ok_or(Error::Encryption)?;
+    let state = endgame::dencrypt::encrypt(master_key, &state).ok_or(Error::Encryption)?;
 
     let mut url = config.authorization_endpoint.clone();
     url.query_pairs_mut()
@@ -101,8 +101,10 @@ pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Erro
     }
 
     let state = get_param(query, "state")
-        .and_then(|s| dencrypt::decrypt::<types::State>(master_key, s.as_bytes()))
-        .filter(|s| s.timestamp >= types::Timestamp::now() - std::time::Duration::from_secs(60))
+        .and_then(|s| endgame::dencrypt::decrypt::<types::State>(master_key, s.as_bytes()))
+        .filter(|s| {
+            s.timestamp >= endgame::types::Timestamp::now() - std::time::Duration::from_secs(60)
+        })
         .ok_or(())?;
 
     let code = get_param(query, "code")
@@ -186,10 +188,10 @@ fn decode_token(token: String) -> Result<Jwt, Error> {
 }
 
 fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {
-    let cookie = dencrypt::encrypt(
+    let cookie = endgame::dencrypt::encrypt(
         config.key,
-        &types::Token {
-            timestamp: types::Timestamp::now() + config.session_ttl,
+        &endgame::types::Token {
+            timestamp: endgame::types::Timestamp::now() + config.session_ttl,
             email: jwt.email,
             given_name: jwt.given_name,
             family_name: jwt.family_name,
@@ -213,13 +215,18 @@ fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::random_array;
+
+    pub fn random_array<const L: usize>() -> [u8; L] {
+        let mut value = [0; L];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut value);
+        value
+    }
 
     #[test]
     fn state_round_trip() {
         let state = types::State {
             nonce: random_array(),
-            timestamp: types::Timestamp::now(),
+            timestamp: endgame::types::Timestamp::now(),
             redirect: url::Url::parse("http://localhost").unwrap(),
             oidc_id: usize::from_ne_bytes(random_array()),
             oidc_signature: rand::random(),
@@ -227,8 +234,9 @@ mod tests {
 
         let key = random_array();
 
-        let encrypted = dencrypt::encrypt(key, &state).unwrap();
-        let decrypted = dencrypt::decrypt::<types::State>(key, encrypted.as_bytes()).unwrap();
+        let encrypted = endgame::dencrypt::encrypt(key, &state).unwrap();
+        let decrypted =
+            endgame::dencrypt::decrypt::<types::State>(key, encrypted.as_bytes()).unwrap();
 
         assert_eq!(state, decrypted);
     }
