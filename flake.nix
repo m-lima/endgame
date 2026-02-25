@@ -103,10 +103,7 @@
       all.outputs
       // {
         inherit module;
-        packages = {
-          cli = cli.outputs.packages.default;
-          nginx = nginx.outputs.packages.default;
-        };
+        packages.default = cli.outputs.packages.default;
         apps.default = cli.outputs.apps.default;
       }
     );
