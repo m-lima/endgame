@@ -7,3 +7,7 @@ edition.workspace = true
 crypter = { workspace = true }
 endgame = { path = "../endgame" }
 base64 = { workspace = true }
+
+[[bin]]
+name = "endgame"
+path = "src/main.rs"

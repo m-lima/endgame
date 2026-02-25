@@ -38,7 +38,7 @@
           };
           inputs = [
             nginx.outputs.packages.default
-            pkgs.pkg-config
+            pkgs.openssl
           ];
           src = ./nginx/module;
         };
@@ -60,9 +60,11 @@
         };
         rustOptions = {
           binary = false;
-          bindgen = true;
           buildInputs = pkgs: [ pkgs.openssl ];
-          nativeBuildInputs = pkgs: [ pkgs.pkg-config ];
+          nativeBuildInputs = pkgs: [
+            pkgs.pkg-config
+            pkgs.rust-cbindgen
+          ];
           formatters = {
             clang-format.enable = true;
             mdformat.enable = true;
@@ -79,11 +81,23 @@
           rustOptions
           // {
             binary = true;
+            bindgen = false;
             overrides.mainArgs.cargoExtraArgs = "-p cli";
           }
         );
         nginx = helper.lib.rust.helper inputs system ./. (
-          rustOptions // { overrides.mainArgs.cargoExtraArgs = "-p nginx"; }
+          rustOptions
+          // {
+            overrides = {
+              mainArgs = {
+                cargoExtraArgs = "-p nginx";
+                postInstall = ''
+                  mkdir -p $out/include
+                  cbindgen . --crate nginx --output $out/include/endgame.h
+                '';
+              };
+            };
+          }
         );
       in
       all.outputs

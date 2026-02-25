@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [lib]
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib"]
+name = "endgame"
+path = "src/lib.rs"
+doc = false
 
 [dependencies]
 atomic_refcell = { workspace = true }
