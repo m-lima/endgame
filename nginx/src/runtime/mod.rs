@@ -50,6 +50,7 @@ pub fn get_redirect_login_url(
     oidc_id: usize,
     oidc_signature: u32,
     redirect: url::Url,
+    select_account: bool,
 ) -> Result<url::Url, Error> {
     let configs = super::CONFIGS.borrow();
     let config = configs
@@ -78,6 +79,11 @@ pub fn get_redirect_login_url(
         .append_pair("redirect_uri", config.client_callback_url.as_str())
         .append_pair("state", &state)
         .append_pair("nonce", &nonce);
+
+    if select_account {
+        url.query_pairs_mut()
+            .append_pair("prompt", "select_account");
+    }
 
     Ok(url)
 }

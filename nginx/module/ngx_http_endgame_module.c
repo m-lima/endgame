@@ -5,6 +5,7 @@
 #include <endgame.h>
 
 #include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -12,6 +13,8 @@ enum endgame_mode_e;
 typedef enum endgame_mode_e endgame_mode_t;
 struct endgame_conf_s;
 typedef struct endgame_conf_s endgame_conf_t;
+struct endgame_redirect_s;
+typedef struct endgame_redirect_s endgame_redirect_t;
 
 static ngx_int_t endgame_preinit(ngx_conf_t *cf);
 static ngx_int_t endgame_init(ngx_conf_t *cf);
@@ -32,18 +35,24 @@ static char *endgame_conf_set_key(ngx_conf_t *cf, ngx_command_t *cmd,
                                   void *conf);
 static char *endgame_conf_set_whitelist(ngx_conf_t *cf, ngx_command_t *cmd,
                                         void *conf);
+static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
+                                       void *conf);
 
 static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
                                          endgame_conf_t *egcf);
 static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
-                                               endgame_conf_t *egcf);
+                                               endgame_conf_t *egcf,
+                                               bool select_account);
 
 static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
                                             ngx_str_t name);
 static ngx_int_t endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right);
+static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
+                                               ngx_str_t prefix);
 static ngx_int_t endgame_set_header(ngx_http_request_t *r,
                                     ngx_str_t header_name,
                                     ngx_str_t header_value);
+static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location);
 static ngx_int_t endgame_set_location_header(ngx_http_request_t *r,
                                              ngx_str_t header_value);
 static ngx_int_t endgame_set_cookie_header(ngx_http_request_t *r,
@@ -57,6 +66,7 @@ enum endgame_mode_e {
   DISABLED = 0,
   ENABLED = 1,
   CALLBACK = 2,
+  RESET = 3,
 };
 
 #define UNUSED_REF (size_t)-1
@@ -66,11 +76,17 @@ struct endgame_conf_oidc_ref_s {
   uint32_t signature;
 };
 
+struct endgame_redirect_s {
+  ngx_str_t location;
+  ngx_str_t header;
+};
+
 struct endgame_conf_s {
   endgame_mode_t mode; // Master switch
 
   ngx_flag_t auto_login;          // Should it try to login or return 401
   ngx_str_t login_control_header; // Override header for `auto_login`
+  endgame_redirect_t redirect;    // Where to redirect to after login
   ngx_array_t *whitelist;         // Optional list of allowed users
 
   // Temporary
@@ -104,6 +120,11 @@ static ngx_command_t endgame_commands[] = {
          NGX_CONF_TAKE1,
      endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(endgame_conf_t, login_control_header), NULL},
+    {ngx_string("endgame_redirect"),
+     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
+         NGX_CONF_TAKE12,
+     endgame_conf_set_redirect, NGX_HTTP_LOC_CONF_OFFSET,
+     offsetof(endgame_conf_t, redirect), NULL},
     {ngx_string("endgame_whitelist"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
          NGX_CONF_1MORE,
@@ -230,6 +251,8 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
       ngx_http_get_module_loc_conf(r, ngx_http_endgame_module);
 
   switch (egcf->mode) {
+  case RESET:
+    return endgame_handle_redirect_login(r, egcf, true);
   case CALLBACK:
     return endgame_callback(r, egcf);
   case ENABLED:
@@ -464,10 +487,10 @@ static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
     if (header_is("never")) {
       return NGX_HTTP_UNAUTHORIZED;
     }
-    return endgame_handle_redirect_login(r, egcf);
+    return endgame_handle_redirect_login(r, egcf, false);
   } else {
     if (header_is("always")) {
-      return endgame_handle_redirect_login(r, egcf);
+      return endgame_handle_redirect_login(r, egcf, false);
     }
     return NGX_HTTP_UNAUTHORIZED;
   }
@@ -512,12 +535,60 @@ static ngx_int_t endgame_ngx_str_t_eq(ngx_str_t left, ngx_str_t right) {
           ngx_strncasecmp(left.data, right.data, left.len) == 0);
 }
 
+static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
+                                               ngx_str_t prefix) {
+  if (string.data == NULL || prefix.data == NULL) {
+    return false;
+  }
+
+  return string.len >= prefix.len &&
+         ngx_strncasecmp(string.data, prefix.data, prefix.len) == 0;
+}
+
+static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
+  if (r->headers_in.host == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "missing Host header");
+    return NGX_HTTP_BAD_REQUEST;
+  }
+
+  size_t len = (sizeof("https://") - 1 + r->headers_in.host->value.len +
+                r->unparsed_uri.len);
+
+  location->data = ngx_pnalloc(r->pool, len);
+  if (location->data == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "could not allocate redirect value");
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+
+  u_char *end = ngx_snprintf(location->data, len, "https://%V%V",
+                             &r->headers_in.host->value, &r->unparsed_uri);
+  location->len = end - location->data;
+
+  return NGX_OK;
+}
+
 static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
-                                               endgame_conf_t *egcf) {
+                                               endgame_conf_t *egcf,
+                                               bool select_account) {
+  ngx_str_t redirect;
+  if (egcf->redirect.header.data &&
+      ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
+                   &redirect) == NGX_OK) {
+  } else if (endgame_ngx_str_t_starts_with(egcf->redirect.location,
+                                           (ngx_str_t)ngx_string("https://"))) {
+    redirect = egcf->redirect.location;
+  } else {
+    ngx_int_t result = extract_here(r, &redirect);
+    if (result != NGX_OK) {
+      return result;
+    }
+  }
+
   ngx_str_t location;
   EndgameError error = endgame_auth_redirect_login_url(
-      egcf->master_key, egcf->oidc_ref, r->headers_in.host->value,
-      r->unparsed_uri, &location, r->pool);
+      egcf->master_key, egcf->oidc_ref, redirect, select_account, &location,
+      r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to get auth url: '%V'", &error.msg);
@@ -560,6 +631,10 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   endgame_conf_t *prev = parent;
   endgame_conf_t *conf = child;
 
+  if (prev->mode == RESET) {
+    return "cannot have a reset as a parent";
+  }
+
   if (prev->mode == CALLBACK) {
     return "cannot have a callback as a parent";
   }
@@ -572,6 +647,18 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   ngx_conf_merge_str_value(conf->login_control_header,
                            prev->login_control_header, "Endgame-AutoLogin");
   ngx_conf_merge_ptr_value(conf->whitelist, prev->whitelist, NULL);
+
+  if (conf->redirect.location.data == NULL) {
+    if (prev->redirect.location.data) {
+      conf->redirect.location.data = prev->redirect.location.data;
+      conf->redirect.location.len = prev->redirect.location.len;
+      conf->redirect.header.data = prev->redirect.header.data;
+      conf->redirect.header.len = prev->redirect.header.len;
+    } else {
+      ngx_str_set(&conf->redirect.location, "here");
+      ngx_str_null(&conf->redirect.header);
+    }
+  }
 
   if (!conf->key_set) {
     if (prev->key_set) {
@@ -606,6 +693,7 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   check_missing(client_id);
   check_missing(client_secret);
   check_missing(client_callback_url);
+  check_missing(redirect.location);
 #undef check_missing
 
   char *error = endgame_conf_push(
@@ -642,9 +730,11 @@ static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
     egcf->mode = DISABLED;
   } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("callback"))) {
     egcf->mode = CALLBACK;
+  } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("reset"))) {
+    egcf->mode = RESET;
   } else {
     ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", arg);
-    return "should be 'on', 'off', or 'callback'";
+    return "should be 'on', 'off', 'callback', or 'reset'";
   }
 
   return NGX_CONF_OK;
@@ -682,7 +772,7 @@ static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
   ngx_str_t *field = (ngx_str_t *)((char *)conf + cmd->offset);
 
   if (field->len == 0) {
-    return "is just whitespaces";
+    return "is just whitespace";
   }
 
   return NGX_CONF_OK;
@@ -788,6 +878,53 @@ static char *endgame_conf_set_whitelist(ngx_conf_t *cf, ngx_command_t *cmd,
 
   if (egcf->whitelist->nelts == 0) {
     egcf->whitelist = NULL;
+  }
+
+  return NGX_CONF_OK;
+}
+
+static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
+                                       void *conf) {
+  endgame_conf_t *egcf = conf;
+
+  ngx_str_t *arg = cf->args->elts;
+
+  if (egcf->redirect.location.data) {
+    return "is duplicate";
+  }
+
+  // Capture `endgame_whitelist here`
+  if (!endgame_ngx_str_t_eq(arg[1], (ngx_str_t)ngx_string("here"))) {
+    ngx_str_t value = arg[1];
+
+    // Trim it
+    endgame_ngx_str_t_trim(&value);
+
+    if (value.len == 0) {
+      return "is just whitespace";
+    }
+
+    if (!endgame_ngx_str_t_starts_with(value,
+                                       (ngx_str_t)ngx_string("https://"))) {
+      return "does not start with 'https://'";
+    }
+
+    egcf->redirect.location = value;
+  }
+
+  if (cf->args->nelts == 3) {
+    ngx_str_t value = arg[2];
+
+    // Trim it
+    endgame_ngx_str_t_trim(&value);
+
+    if (value.len == 0) {
+      return "header name is just whitespace";
+    }
+
+    egcf->redirect.header = value;
+  } else {
+    ngx_str_null(&egcf->redirect.header);
   }
 
   return NGX_CONF_OK;

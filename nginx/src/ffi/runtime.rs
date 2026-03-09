@@ -71,25 +71,20 @@ macro_rules! to_str {
 pub extern "C" fn endgame_auth_redirect_login_url(
     master_key: EndgameKey,
     oidc_ref: super::types::EndgameOidc,
-    redirect_host: ngx_str_t,
-    redirect_path: ngx_str_t,
+    redirect: ngx_str_t,
+    select_account: bool,
     login_url: &mut ngx_str_t,
     pool: *mut libc::c_void,
 ) -> EndgameError {
-    let redirect = {
-        let host = arg!(str redirect_host);
-        let path = arg!(str redirect_path);
-        match url::Url::parse(&format!("https://{host}{path}")) {
-            Ok(url) => url,
-            Err(err) => {
-                log_err!("The constructed redirect URL is not valid", err);
-                return EndgameError::new(500, "The constructed redirect URL is not valid");
-            }
-        }
-    };
+    let redirect = arg!(url redirect);
 
-    match oidc::get_redirect_login_url(master_key.bytes, oidc_ref.id, oidc_ref.signature, redirect)
-    {
+    match oidc::get_redirect_login_url(
+        master_key.bytes,
+        oidc_ref.id,
+        oidc_ref.signature,
+        redirect,
+        select_account,
+    ) {
         Ok(url) => {
             *login_url = to_str!(url, pool);
             EndgameError::none()

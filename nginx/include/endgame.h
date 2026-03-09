@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ngx_string.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef struct EndgameKey {
@@ -38,8 +39,7 @@ char *endgame_conf_push(struct EndgameKey key, ngx_str_t discovery_url,
 
 struct EndgameError endgame_auth_redirect_login_url(
     struct EndgameKey master_key, struct EndgameOidc oidc_ref,
-    ngx_str_t redirect_host, ngx_str_t redirect_path, ngx_str_t *login_url,
-    void *pool);
+    ngx_str_t redirect, bool select_account, ngx_str_t *login_url, void *pool);
 
 struct EndgameError endgame_auth_exchange_token(struct EndgameKey master_key,
                                                 ngx_str_t query,
