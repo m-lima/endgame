@@ -117,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "cli"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "base64",
  "crypter",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "endgame"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "base64",
  "crypter",
@@ -694,7 +694,7 @@ dependencies = [
 
 [[package]]
 name = "nginx"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "atomic_refcell",
  "base64",

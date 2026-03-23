@@ -9,7 +9,7 @@ fn help<O: std::io::Write>(mut output: O) {
     let _ = writeln!(output, "  -g --given    Given name to encrypt");
     let _ = writeln!(output, "  -f --family   Family name to encrypt");
     let _ = writeln!(output, "  -p --picture  Picture URL to encrypt");
-    let _ = writeln!(output, "  -a --age      Age in seconds of the token");
+    let _ = writeln!(output, "  -t --ttl      TTL of the token in seconds");
 }
 
 fn parse_args<I: Iterator<Item = String>>(mut args: I) -> (crypter::Key, endgame::types::Token) {
