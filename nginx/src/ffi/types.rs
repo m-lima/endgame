@@ -19,6 +19,11 @@ impl ngx_str_t {
         }
     }
 
+    pub const fn take(&mut self, other: Self) {
+        self.len = other.len;
+        self.data = other.data;
+    }
+
     pub const fn none() -> Self {
         Self {
             len: 0,

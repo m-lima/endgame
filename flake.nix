@@ -71,6 +71,7 @@
           };
           fmtExcludes = [
             "nginx/module/config"
+            "nginx/include/endgame.h"
           ];
           overrides.devShell = {
             C_INCLUDE_PATH = "${nginx-headers}:${./nginx/include}";

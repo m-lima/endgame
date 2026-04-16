@@ -2,7 +2,8 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-#include <endgame.h>
+// #include <endgame.h>
+#include "../include/endgame.h"
 
 #include <limits.h>
 #include <stdbool.h>
@@ -31,6 +32,8 @@ static char *endgame_conf_set_str(ngx_conf_t *cf, ngx_command_t *cmd,
                                   void *conf);
 static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
                                            void *conf);
+static char *endgame_conf_set_loaded_str(ngx_conf_t *cf, ngx_command_t *cmd,
+                                         void *conf);
 static char *endgame_conf_set_key(ngx_conf_t *cf, ngx_command_t *cmd,
                                   void *conf);
 static char *endgame_conf_set_whitelist(ngx_conf_t *cf, ngx_command_t *cmd,
@@ -158,13 +161,13 @@ static ngx_command_t endgame_commands[] = {
      offsetof(endgame_conf_t, session_domain), NULL},
     {ngx_string("endgame_client_id"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-         NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+         NGX_CONF_TAKE2,
+     endgame_conf_set_loaded_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(endgame_conf_t, client_id), NULL},
     {ngx_string("endgame_client_secret"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-         NGX_CONF_TAKE1,
-     endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
+         NGX_CONF_TAKE2,
+     endgame_conf_set_loaded_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(endgame_conf_t, client_secret), NULL},
     {ngx_string("endgame_client_callback_url"),
      NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
@@ -773,6 +776,25 @@ static char *endgame_conf_set_nonempty_str(ngx_conf_t *cf, ngx_command_t *cmd,
 
   if (field->len == 0) {
     return "is just whitespace";
+  }
+
+  return NGX_CONF_OK;
+}
+
+static char *endgame_conf_set_loaded_str(ngx_conf_t *cf, ngx_command_t *cmd,
+                                         void *conf) {
+  ngx_str_t *field = (ngx_str_t *)((char *)conf + cmd->offset);
+  if (field->data) {
+    return "is duplicate";
+  }
+
+  ngx_str_t *arg = cf->args->elts;
+  ngx_str_t *kind = arg + 1;
+  ngx_str_t *value = arg + 2;
+
+  char *error = endgame_conf_load_string(*kind, *value, field, cf->pool);
+  if (error != NULL) {
+    return error;
   }
 
   return NGX_CONF_OK;

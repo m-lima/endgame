@@ -75,6 +75,51 @@ pub extern "C" fn endgame_conf_load_key(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn endgame_conf_load_string(
+    kind: ngx_str_t,
+    value: ngx_str_t,
+    output: &mut ngx_str_t,
+    pool: *mut libc::c_void,
+) -> *mut libc::c_char {
+    let value = match kind.as_option() {
+        Some(b"raw") => value,
+        Some(b"file") => {
+            let Some(path) = value.as_option() else {
+                bail!(c"is null");
+            };
+
+            let Ok(path) = str::from_utf8(path) else {
+                bail!(c"is not valid UTF-8");
+            };
+            let path = path.trim();
+            if path.is_empty() {
+                bail!(c"is empty");
+            }
+
+            let path = std::path::PathBuf::from(path);
+            if !path.exists() {
+                bail!(c"does not exist");
+            }
+
+            let content = match std::fs::read_to_string(path) {
+                Ok(content) => content,
+                Err(e) => bail!(c"is unreadable", "Could not open path", e),
+            };
+
+            let Some(content) = ngx_str_t::copy(content, pool) else {
+                bail!(c"could not be allocated");
+            };
+
+            content
+        }
+        _ => bail!(c"should be 'raw' or 'file'"),
+    };
+
+    output.take(value);
+    std::ptr::null_mut()
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn endgame_conf_push(
     key: EndgameKey,
     discovery_url: ngx_str_t,
