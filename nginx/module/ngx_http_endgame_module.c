@@ -48,8 +48,8 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
                                                endgame_conf_t *egcf,
                                                bool select_account);
 
-static ngx_int_t endgame_get_user(ngx_http_request_t *r,
-                                  ngx_http_variable_value_t *v, uintptr_t data);
+static ngx_int_t endgame_get_var(ngx_http_request_t *r,
+                                 ngx_http_variable_value_t *v, uintptr_t data);
 
 static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
                                             ngx_str_t name);
@@ -90,6 +90,9 @@ struct endgame_redirect_s {
 
 struct endgame_ctx_s {
   ngx_str_t email;
+  ngx_str_t given;
+  ngx_str_t family;
+  ngx_str_t picture;
 };
 
 struct endgame_conf_s {
@@ -116,10 +119,16 @@ struct endgame_conf_s {
   EndgameOidc oidc_ref;  // Id for fetched OIDC config
 };
 
-static ngx_http_variable_t endgame_vars[] = {{ngx_string("endgame_user"), NULL,
-                                              endgame_get_user, 0,
-                                              NGX_HTTP_VAR_NOCACHEABLE, 0},
-                                             ngx_http_null_variable};
+static ngx_http_variable_t endgame_vars[] = {
+    {ngx_string("endgame_email"), NULL, endgame_get_var, 0,
+     NGX_HTTP_VAR_NOCACHEABLE, 0},
+    {ngx_string("endgame_given_name"), NULL, endgame_get_var, 1,
+     NGX_HTTP_VAR_NOCACHEABLE, 0},
+    {ngx_string("endgame_family_name"), NULL, endgame_get_var, 2,
+     NGX_HTTP_VAR_NOCACHEABLE, 0},
+    {ngx_string("endgame_picture"), NULL, endgame_get_var, 3,
+     NGX_HTTP_VAR_NOCACHEABLE, 0},
+    ngx_http_null_variable};
 
 static ngx_command_t endgame_commands[] = {
     {ngx_string("endgame"),
@@ -305,9 +314,9 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
   }
   ngx_http_set_ctx(r, ctx, ngx_http_endgame_module);
 
-  ngx_str_t given, family, picture;
-  EndgameError error = endgame_token_decrypt(
-      egcf->key, value, &ctx->email, &given, &family, &picture, r->pool);
+  EndgameError error =
+      endgame_token_decrypt(egcf->key, value, &ctx->email, &ctx->given,
+                            &ctx->family, &ctx->picture, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);
@@ -337,18 +346,20 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
     return result;
   }
 
-  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Given-Name"), given);
+  result =
+      endgame_set_header(r, (ngx_str_t)ngx_string("X-Given-Name"), ctx->given);
+  if (result != NGX_OK) {
+    return result;
+  }
+
+  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Family-Name"),
+                              ctx->family);
   if (result != NGX_OK) {
     return result;
   }
 
   result =
-      endgame_set_header(r, (ngx_str_t)ngx_string("X-Family-Name"), family);
-  if (result != NGX_OK) {
-    return result;
-  }
-
-  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Picture"), picture);
+      endgame_set_header(r, (ngx_str_t)ngx_string("X-Picture"), ctx->picture);
   if (result != NGX_OK) {
     return result;
   }
@@ -531,17 +542,40 @@ static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
 #undef header_is
 }
 
-static ngx_int_t endgame_get_user(ngx_http_request_t *r,
-                                  ngx_http_variable_value_t *v,
-                                  uintptr_t data) {
+static ngx_int_t endgame_get_var(ngx_http_request_t *r,
+                                 ngx_http_variable_value_t *v, uintptr_t data) {
   endgame_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_endgame_module);
 
-  if (ctx != NULL && ctx->email.data != NULL) {
+  if (ctx == NULL) {
+    v->not_found = 1;
+    return NGX_OK;
+  }
+
+  ngx_str_t *target;
+  switch (data) {
+  case 0:
+    target = &ctx->email;
+    break;
+  case 1:
+    target = &ctx->given;
+    break;
+  case 2:
+    target = &ctx->family;
+    break;
+  case 3:
+    target = &ctx->picture;
+    break;
+  default:
+    v->not_found = 1;
+    return NGX_OK;
+  }
+
+  if (target->data != NULL) {
     v->valid = 1;
     v->no_cacheable = 0;
     v->not_found = 0;
-    v->len = ctx->email.len;
-    v->data = ctx->email.data;
+    v->len = target->len;
+    v->data = target->data;
   } else {
     v->not_found = 1;
   }
