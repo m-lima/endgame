@@ -2,8 +2,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-// #include <endgame.h>
-#include "../include/endgame.h"
+#include <endgame.h>
 
 #include <limits.h>
 #include <stdbool.h>
@@ -16,6 +15,8 @@ struct endgame_conf_s;
 typedef struct endgame_conf_s endgame_conf_t;
 struct endgame_redirect_s;
 typedef struct endgame_redirect_s endgame_redirect_t;
+struct endgame_ctx_s;
+typedef struct endgame_ctx_s endgame_ctx_t;
 
 static ngx_int_t endgame_preinit(ngx_conf_t *cf);
 static ngx_int_t endgame_init(ngx_conf_t *cf);
@@ -46,6 +47,9 @@ static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
 static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
                                                endgame_conf_t *egcf,
                                                bool select_account);
+
+static ngx_int_t endgame_get_user(ngx_http_request_t *r,
+                                  ngx_http_variable_value_t *v, uintptr_t data);
 
 static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
                                             ngx_str_t name);
@@ -84,6 +88,10 @@ struct endgame_redirect_s {
   ngx_str_t header;
 };
 
+struct endgame_ctx_s {
+  ngx_str_t email;
+};
+
 struct endgame_conf_s {
   endgame_mode_t mode; // Master switch
 
@@ -107,6 +115,11 @@ struct endgame_conf_s {
   EndgameKey master_key; // Used for dencrypting the state
   EndgameOidc oidc_ref;  // Id for fetched OIDC config
 };
+
+static ngx_http_variable_t endgame_vars[] = {{ngx_string("endgame_user"), NULL,
+                                              endgame_get_user, 0,
+                                              NGX_HTTP_VAR_NOCACHEABLE, 0},
+                                             ngx_http_null_variable};
 
 static ngx_command_t endgame_commands[] = {
     {ngx_string("endgame"),
@@ -204,6 +217,18 @@ ngx_module_t ngx_http_endgame_module = {
 
 static ngx_int_t endgame_preinit(ngx_conf_t *cf) {
   endgame_conf_clear();
+
+  ngx_http_variable_t *var, *v;
+
+  for (v = endgame_vars; v->name.len; ++v) {
+    var = ngx_http_add_variable(cf, &v->name, v->flags);
+    if (var == NULL) {
+      return NGX_ERROR;
+    }
+    var->get_handler = v->get_handler;
+    var->data = v->data;
+  }
+
   return NGX_OK;
 }
 
@@ -274,9 +299,15 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
     return endgame_handle_unauthed(r, egcf);
   }
 
-  ngx_str_t email, given, family, picture;
-  EndgameError error = endgame_token_decrypt(egcf->key, value, &email, &given,
-                                             &family, &picture, r->pool);
+  endgame_ctx_t *ctx = ngx_palloc(r->pool, sizeof(endgame_ctx_t));
+  if (ctx == NULL) {
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+  ngx_http_set_ctx(r, ctx, ngx_http_endgame_module);
+
+  ngx_str_t given, family, picture;
+  EndgameError error = endgame_token_decrypt(
+      egcf->key, value, &ctx->email, &given, &family, &picture, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);
@@ -285,14 +316,14 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
     return error.status;
   }
 
-  if (email.data == NULL) {
+  if (ctx->email.data == NULL) {
     return endgame_handle_unauthed(r, egcf);
   }
 
   if (egcf->whitelist != NULL) {
     ngx_str_t *whitelisted = egcf->whitelist->elts;
     for (ngx_uint_t i = 0; i < egcf->whitelist->nelts; ++i) {
-      if (endgame_ngx_str_t_eq(email, whitelisted[i])) {
+      if (endgame_ngx_str_t_eq(ctx->email, whitelisted[i])) {
         goto whitelisted;
       }
     }
@@ -301,7 +332,7 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
   }
 
   ngx_int_t result;
-  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), email);
+  result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), ctx->email);
   if (result != NGX_OK) {
     return result;
   }
@@ -498,6 +529,24 @@ static ngx_int_t endgame_handle_unauthed(ngx_http_request_t *r,
     return NGX_HTTP_UNAUTHORIZED;
   }
 #undef header_is
+}
+
+static ngx_int_t endgame_get_user(ngx_http_request_t *r,
+                                  ngx_http_variable_value_t *v,
+                                  uintptr_t data) {
+  endgame_ctx_t *ctx = ngx_http_get_module_ctx(r, ngx_http_endgame_module);
+
+  if (ctx != NULL && ctx->email.data != NULL) {
+    v->valid = 1;
+    v->no_cacheable = 0;
+    v->not_found = 0;
+    v->len = ctx->email.len;
+    v->data = ctx->email.data;
+  } else {
+    v->not_found = 1;
+  }
+
+  return NGX_OK;
 }
 
 static ngx_table_elt_t *endgame_header_find(ngx_list_part_t *part,
