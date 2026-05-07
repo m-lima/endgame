@@ -1,5 +1,7 @@
 mod types;
 
+const STATE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
 #[derive(Debug, serde::Deserialize)]
 struct Jwt {
     iss: url::Url,
@@ -119,11 +121,11 @@ pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Erro
             })
     }
 
+    let now = endgame::types::Timestamp::now();
+
     let state = get_param(query, "state")
         .and_then(|s| endgame::dencrypt::decrypt::<types::State>(master_key, s.as_bytes()))
-        .filter(|s| {
-            s.timestamp >= endgame::types::Timestamp::now() - std::time::Duration::from_secs(60)
-        })
+        .filter(|s| s.timestamp >= now - STATE_TTL)
         .ok_or(())?;
 
     let code = get_param(query, "code")
@@ -131,11 +133,46 @@ pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Erro
         .and_then(|c| String::from_utf8(c).ok())
         .ok_or(())?;
 
+    if is_code_invalid(&code, now) {
+        return Err(());
+    }
+
     REQUESTER
         .rt
-        .spawn(async { finalizer(async_exchange(state, code).await) });
+        .spawn(async move { finalizer(async_exchange(state, code).await) });
 
     Ok(())
+}
+
+fn is_code_invalid(code: &str, now: endgame::types::Timestamp) -> bool {
+    let hash = {
+        let mut hasher = std::hash::DefaultHasher::new();
+        for b in code.as_bytes() {
+            std::hash::Hasher::write_u8(&mut hasher, *b);
+        }
+        std::hash::Hasher::finish(&hasher)
+    };
+
+    let mut found = false;
+    let mut used_codes = super::USED_CODES.borrow_mut();
+    let deadline = now - STATE_TTL;
+    used_codes.retain(|(ts, h)| {
+        if *ts < deadline {
+            false
+        } else {
+            if *h == hash {
+                found = true;
+            }
+            true
+        }
+    });
+
+    if found || used_codes.len() >= 128 {
+        true
+    } else {
+        used_codes.push((now, hash));
+        false
+    }
 }
 
 async fn async_exchange(state: types::State, code: String) -> Result<(String, url::Url), Error> {

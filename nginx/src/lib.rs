@@ -101,3 +101,6 @@ impl OidcConfig {
 
 static CONFIGS: atomic_refcell::AtomicRefCell<Vec<OidcConfig>> =
     atomic_refcell::AtomicRefCell::new(Vec::new());
+
+static USED_CODES: atomic_refcell::AtomicRefCell<Vec<(endgame::types::Timestamp, u64)>> =
+    atomic_refcell::AtomicRefCell::new(Vec::new());
