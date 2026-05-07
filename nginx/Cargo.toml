@@ -14,7 +14,8 @@ atomic_refcell = { workspace = true }
 base64 = { workspace = true }
 crypter = { workspace = true }
 endgame = { path = "../endgame" }
-libc = "0.2.180"
+libc = { workspace = true }
+jsonwebtoken = { workspace = true }
 percent-encoding = { workspace = true }
 reqwest = { workspace = true, default-features = false, features = [
   "native-tls",

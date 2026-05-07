@@ -12,15 +12,28 @@ struct Jwt {
 
 pub enum Error {
     MissingConfiguration,
-    Request(reqwest::Error),
-    Response,
     Encryption,
+    Exchange(ExchangeError),
 }
 
 impl Error {
     fn response<T>(_: T) -> Self {
-        Self::Response
+        Self::Exchange(ExchangeError::Response)
     }
+
+    fn request(err: reqwest::Error) -> Self {
+        Self::Exchange(ExchangeError::Request(err))
+    }
+
+    fn jwt(msg: &'static str) -> Self {
+        Self::Exchange(ExchangeError::Jwt(msg))
+    }
+}
+
+pub enum ExchangeError {
+    Response,
+    Request(reqwest::Error),
+    Jwt(&'static str),
 }
 
 struct Requester {
@@ -132,15 +145,22 @@ async fn async_exchange(state: types::State, code: String) -> Result<(String, ur
         .filter(|c| c.signature == state.oidc_signature)
         .ok_or(Error::MissingConfiguration)?;
 
-    let jwt = get_id_token(code, config).await.and_then(decode_token)?;
+    let jwt = get_id_token(code, config).await?;
+    let jwt = decode_token(&jwt, config)?;
 
     let nonce = base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
         state.nonce,
     );
 
-    if jwt.iss != config.issuer || jwt.nonce != nonce || jwt.email.trim().is_empty() {
-        return Err(Error::Response);
+    if jwt.iss != config.issuer {
+        return Err(Error::jwt("Issuer mismatch"));
+    }
+    if jwt.nonce != nonce {
+        return Err(Error::jwt("Nonce mismatch"));
+    }
+    if jwt.email.trim().is_empty() {
+        return Err(Error::jwt("Email is empty"));
     }
 
     make_cookie(jwt, config).map(|cookie| (cookie, state.redirect))
@@ -175,7 +195,7 @@ async fn get_id_token(code: String, config: &super::OidcConfig) -> Result<String
         .form(&request)
         .send()
         .await
-        .map_err(Error::Request)?
+        .map_err(Error::request)?
         .error_for_status()
         .map_err(Error::response)?
         .json::<Response>()
@@ -184,13 +204,25 @@ async fn get_id_token(code: String, config: &super::OidcConfig) -> Result<String
         .map(|r| r.id_token)
 }
 
-fn decode_token(token: String) -> Result<Jwt, Error> {
-    let payload = token.split('.').nth(1).ok_or(Error::Response)?;
-    let payload =
-        base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, payload)
-            .map_err(Error::response)?;
-    drop(token);
-    serde_json::from_slice(&payload).map_err(Error::response)
+fn decode_token(token: &str, config: &super::OidcConfig) -> Result<Jwt, Error> {
+    let Ok(header) = jsonwebtoken::decode_header(token) else {
+        return Err(Error::jwt("Could not decode jwt header"));
+    };
+    let Some(kid) = header.kid else {
+        return Err(Error::jwt("No kid in header"));
+    };
+
+    let Some(jwk) = config.jwks.find(&kid) else {
+        return Err(Error::jwt("Could not find known kid"));
+    };
+
+    let mut validation = jsonwebtoken::Validation::new(header.alg);
+    validation.set_audience(&[config.client_id]);
+    validation.validate_exp = true;
+
+    jsonwebtoken::decode(token, jwk, &validation)
+        .map(|t| t.claims)
+        .map_err(|_| Error::jwt("Failed validation"))
 }
 
 fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {

@@ -3,13 +3,15 @@ pub enum Error {
     UrlNotAbsolute,
     Request(Box<dyn std::error::Error>),
     BadIssuer(String, String),
+    Jwt(&'static str),
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug)]
 struct DiscoveryDocument {
     issuer: url::Url,
     authorization_endpoint: url::Url,
     token_endpoint: url::Url,
+    jwks: super::Jwks,
 }
 
 pub fn clear() {
@@ -70,6 +72,7 @@ pub(crate) fn push(
             issuer: issuer.clone(),
             authorization_endpoint: config.authorization_endpoint.clone(),
             token_endpoint: config.token_endpoint.clone(),
+            jwks: config.jwks.clone(),
         }
     } else {
         discover(discovery_url)?
@@ -87,6 +90,7 @@ pub(crate) fn push(
         issuer,
         config.authorization_endpoint,
         config.token_endpoint,
+        config.jwks,
         session_name,
         session_ttl,
         session_domain,
@@ -102,6 +106,14 @@ pub(crate) fn push(
 }
 
 fn discover(discovery_url: url::Url) -> Result<DiscoveryDocument, Error> {
+    #[derive(Debug, serde::Deserialize)]
+    struct RawDiscoveryDocument {
+        issuer: url::Url,
+        authorization_endpoint: url::Url,
+        token_endpoint: url::Url,
+        jwks_uri: url::Url,
+    }
+
     macro_rules! bad_request {
         ($msg: literal) => {{
             |e| {
@@ -116,16 +128,34 @@ fn discover(discovery_url: url::Url) -> Result<DiscoveryDocument, Error> {
         .build()
         .map_err(bad_request!("tokio"))?
         .block_on(async {
-            reqwest::ClientBuilder::new()
+            let client = reqwest::ClientBuilder::new()
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
-                .map_err(bad_request!("build"))?
+                .map_err(bad_request!("build"))?;
+
+            let discovery_document = client
                 .get(discovery_url)
                 .send()
                 .await
-                .map_err(bad_request!("send"))?
-                .json::<DiscoveryDocument>()
+                .map_err(bad_request!("send discovery request"))?
+                .json::<RawDiscoveryDocument>()
                 .await
-                .map_err(bad_request!("send"))
+                .map_err(bad_request!("receive discovery document"))?;
+
+            let jwks = client
+                .get(discovery_document.jwks_uri)
+                .send()
+                .await
+                .map_err(bad_request!("send jwks request"))?
+                .json::<jsonwebtoken::jwk::JwkSet>()
+                .await
+                .map_err(bad_request!("receive jwks"))?;
+
+            jwks.try_into().map(|jwks| DiscoveryDocument {
+                issuer: discovery_document.issuer,
+                authorization_endpoint: discovery_document.authorization_endpoint,
+                token_endpoint: discovery_document.token_endpoint,
+                jwks,
+            })
         })
 }

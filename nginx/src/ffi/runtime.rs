@@ -93,7 +93,7 @@ pub extern "C" fn endgame_auth_redirect_login_url(
             EndgameError::new(500, "Missing OIDC configuration for redirection")
         }
         Err(oidc::Error::Encryption) => EndgameError::new(500, "Failed to encrypt state"),
-        Err(oidc::Error::Response | oidc::Error::Request(_)) => unreachable!(),
+        Err(oidc::Error::Exchange(_)) => unreachable!(),
     }
 }
 
@@ -138,14 +138,18 @@ pub extern "C" fn endgame_auth_exchange_token(
                         log_err!("Missing OIDC configuration for code exchange");
                         500
                     }
-                    oidc::Error::Request(error) => {
-                        log_err!("Failed to make request to code exchange endpoint", error);
-                        500
-                    }
-                    oidc::Error::Response => 401,
                     oidc::Error::Encryption => {
                         log_err!("Failed to encrypt cookie");
                         500
+                    }
+                    oidc::Error::Exchange(oidc::ExchangeError::Response) => 401,
+                    oidc::Error::Exchange(oidc::ExchangeError::Request(error)) => {
+                        log_err!("Failed to make request to code exchange endpoint", error);
+                        500
+                    }
+                    oidc::Error::Exchange(oidc::ExchangeError::Jwt(error)) => {
+                        log_err!("Failed to validate JWT", error);
+                        401
                     }
                 };
                 EndgameResult {

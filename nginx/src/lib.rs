@@ -17,13 +17,48 @@ mod config;
 mod ffi;
 mod runtime;
 
-#[derive(Debug, serde::Deserialize)]
+#[repr(transparent)]
+#[derive(Debug, Clone)]
+struct Jwks(Vec<Jwk>);
+
+impl Jwks {
+    fn find(&self, kid: &str) -> Option<&jsonwebtoken::DecodingKey> {
+        self.0.iter().find(|Jwk(k, _)| k == kid).map(|Jwk(_, k)| k)
+    }
+}
+
+impl TryFrom<jsonwebtoken::jwk::JwkSet> for Jwks {
+    type Error = config::Error;
+
+    fn try_from(value: jsonwebtoken::jwk::JwkSet) -> Result<Self, Self::Error> {
+        let this = value
+            .keys
+            .into_iter()
+            .filter_map(|mut jwk| jwk.common.key_id.take().map(|kid| (kid, jwk)))
+            .map(|(kid, jwk)| (&jwk).try_into().map(|key| Jwk(kid, key)))
+            .collect::<Result<_, _>>()
+            .map_err(|_| Self::Error::Jwt("Could not generate decoding key"))
+            .map(Self)?;
+
+        if this.0.is_empty() {
+            Err(Self::Error::Jwt("No valid JWK present"))
+        } else {
+            Ok(this)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Jwk(String, jsonwebtoken::DecodingKey);
+
+#[derive(Debug)]
 struct OidcConfig {
     signature: u32,
     key: crypter::Key,
     issuer: url::Url,
     authorization_endpoint: url::Url,
     token_endpoint: url::Url,
+    jwks: Jwks,
     session_name: &'static str,
     session_ttl: std::time::Duration,
     session_domain: Option<&'static str>,
@@ -40,6 +75,7 @@ impl OidcConfig {
         issuer: url::Url,
         authorization_endpoint: url::Url,
         token_endpoint: url::Url,
+        jwks: Jwks,
         session_name: &'static str,
         session_ttl: std::time::Duration,
         session_domain: Option<&'static str>,
@@ -53,6 +89,7 @@ impl OidcConfig {
             issuer,
             authorization_endpoint,
             token_endpoint,
+            jwks,
             session_name,
             session_ttl,
             session_domain,

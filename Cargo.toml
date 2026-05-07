@@ -11,6 +11,7 @@ atomic_refcell = "0.1.13"
 base64 = "0.22.1"
 crypter = "0.3.1"
 libc = "0.2.180"
+jsonwebtoken = { version = "10.3.0", features = [ "aws_lc_rs" ] }
 percent-encoding = "2.3.2"
 rand = "0.9.2"
 reqwest = { version = "0.13.1", default-features = false }

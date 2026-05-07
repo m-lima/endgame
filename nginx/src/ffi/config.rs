@@ -199,5 +199,8 @@ pub extern "C" fn endgame_conf_push(
                 format!("{left} != {right}")
             )
         }
+        Err(oidc::Error::Jwt(err)) => {
+            bail!(c"did not have a valid JWKS", "Invalid JWKS response", err)
+        }
     }
 }
