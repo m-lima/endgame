@@ -52,13 +52,18 @@ impl TryFrom<jsonwebtoken::jwk::JwkSet> for Jwks {
 struct Jwk(String, jsonwebtoken::DecodingKey);
 
 #[derive(Debug)]
-struct OidcConfig {
-    signature: u32,
-    key: crypter::Key,
+struct DiscoveryDocument {
     issuer: url::Url,
     authorization_endpoint: url::Url,
     token_endpoint: url::Url,
     jwks: Jwks,
+}
+
+#[derive(Debug)]
+struct OidcConfig {
+    signature: u32,
+    key: crypter::Key,
+    idp: std::sync::Arc<DiscoveryDocument>,
     session_name: &'static str,
     session_ttl: std::time::Duration,
     session_domain: Option<&'static str>,
@@ -72,10 +77,7 @@ impl OidcConfig {
     #[allow(clippy::too_many_arguments)]
     fn new(
         key: crypter::Key,
-        issuer: url::Url,
-        authorization_endpoint: url::Url,
-        token_endpoint: url::Url,
-        jwks: Jwks,
+        idp: std::sync::Arc<DiscoveryDocument>,
         session_name: &'static str,
         session_ttl: std::time::Duration,
         session_domain: Option<&'static str>,
@@ -86,10 +88,7 @@ impl OidcConfig {
         Self {
             signature: rand::random(),
             key,
-            issuer,
-            authorization_endpoint,
-            token_endpoint,
-            jwks,
+            idp,
             session_name,
             session_ttl,
             session_domain,

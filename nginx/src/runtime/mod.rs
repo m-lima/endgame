@@ -84,7 +84,7 @@ pub fn get_redirect_login_url(
     );
     let state = endgame::dencrypt::encrypt(master_key, &state).ok_or(Error::Encryption)?;
 
-    let mut url = config.authorization_endpoint.clone();
+    let mut url = config.idp.authorization_endpoint.clone();
     url.query_pairs_mut()
         .append_pair("client_id", config.client_id)
         .append_pair("response_type", "code")
@@ -146,14 +146,14 @@ async fn async_exchange(state: types::State, code: String) -> Result<(String, ur
         .ok_or(Error::MissingConfiguration)?;
 
     let jwt = get_id_token(code, config).await?;
-    let jwt = decode_token(&jwt, config)?;
+    let jwt = decode_jwt(&jwt, config)?;
 
     let nonce = base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
         state.nonce,
     );
 
-    if jwt.iss != config.issuer {
+    if jwt.iss != config.idp.issuer {
         return Err(Error::jwt("Issuer mismatch"));
     }
     if jwt.nonce != nonce {
@@ -191,7 +191,7 @@ async fn get_id_token(code: String, config: &super::OidcConfig) -> Result<String
 
     REQUESTER
         .client
-        .post(config.token_endpoint.clone())
+        .post(config.idp.token_endpoint.clone())
         .form(&request)
         .send()
         .await
@@ -204,7 +204,7 @@ async fn get_id_token(code: String, config: &super::OidcConfig) -> Result<String
         .map(|r| r.id_token)
 }
 
-fn decode_token(token: &str, config: &super::OidcConfig) -> Result<Jwt, Error> {
+fn decode_jwt(token: &str, config: &super::OidcConfig) -> Result<Jwt, Error> {
     let Ok(header) = jsonwebtoken::decode_header(token) else {
         return Err(Error::jwt("Could not decode jwt header"));
     };
@@ -212,7 +212,7 @@ fn decode_token(token: &str, config: &super::OidcConfig) -> Result<Jwt, Error> {
         return Err(Error::jwt("No kid in header"));
     };
 
-    let Some(jwk) = config.jwks.find(&kid) else {
+    let Some(jwk) = config.idp.jwks.find(&kid) else {
         return Err(Error::jwt("Could not find known kid"));
     };
 

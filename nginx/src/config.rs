@@ -6,14 +6,6 @@ pub enum Error {
     Jwt(&'static str),
 }
 
-#[derive(Debug)]
-struct DiscoveryDocument {
-    issuer: url::Url,
-    authorization_endpoint: url::Url,
-    token_endpoint: url::Url,
-    jwks: super::Jwks,
-}
-
 pub fn clear() {
     let mut configs = super::CONFIGS.borrow_mut();
     configs.clear();
@@ -55,7 +47,7 @@ pub(crate) fn push(
 
     if let Some(idx) = configs.iter().position(|c| {
         c.key == key
-            && c.issuer == issuer
+            && c.idp.issuer == issuer
             && c.session_name == session_name
             && c.session_ttl == session_ttl
             && c.session_domain == session_domain
@@ -67,30 +59,19 @@ pub(crate) fn push(
         return Ok((idx, unsafe { configs.get_unchecked(idx).signature }));
     }
 
-    let config = if let Some(config) = configs.iter().find(|c| c.issuer == issuer) {
-        DiscoveryDocument {
-            issuer: issuer.clone(),
-            authorization_endpoint: config.authorization_endpoint.clone(),
-            token_endpoint: config.token_endpoint.clone(),
-            jwks: config.jwks.clone(),
-        }
+    let idp = if let Some(config) = configs.iter().find(|c| c.idp.issuer == issuer) {
+        config.idp.clone()
     } else {
-        discover(discovery_url)?
+        discover(discovery_url).map(std::sync::Arc::new)?
     };
 
-    if config.issuer != issuer {
-        return Err(Error::BadIssuer(
-            config.issuer.to_string(),
-            issuer.to_string(),
-        ));
+    if idp.issuer != issuer {
+        return Err(Error::BadIssuer(idp.issuer.to_string(), issuer.to_string()));
     }
 
     let config = super::OidcConfig::new(
         key,
-        issuer,
-        config.authorization_endpoint,
-        config.token_endpoint,
-        config.jwks,
+        idp,
         session_name,
         session_ttl,
         session_domain,
@@ -105,15 +86,7 @@ pub(crate) fn push(
     Ok((id, signature))
 }
 
-fn discover(discovery_url: url::Url) -> Result<DiscoveryDocument, Error> {
-    #[derive(Debug, serde::Deserialize)]
-    struct RawDiscoveryDocument {
-        issuer: url::Url,
-        authorization_endpoint: url::Url,
-        token_endpoint: url::Url,
-        jwks_uri: url::Url,
-    }
-
+fn discover(discovery_url: url::Url) -> Result<super::DiscoveryDocument, Error> {
     macro_rules! bad_request {
         ($msg: literal) => {{
             |e| {
@@ -121,6 +94,14 @@ fn discover(discovery_url: url::Url) -> Result<DiscoveryDocument, Error> {
                 Error::Request(Box::new(e))
             }
         }};
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct RawDiscoveryDocument {
+        issuer: url::Url,
+        authorization_endpoint: url::Url,
+        token_endpoint: url::Url,
+        jwks_uri: url::Url,
     }
 
     tokio::runtime::Builder::new_current_thread()
@@ -151,7 +132,7 @@ fn discover(discovery_url: url::Url) -> Result<DiscoveryDocument, Error> {
                 .await
                 .map_err(bad_request!("receive jwks"))?;
 
-            jwks.try_into().map(|jwks| DiscoveryDocument {
+            jwks.try_into().map(|jwks| super::DiscoveryDocument {
                 issuer: discovery_document.issuer,
                 authorization_endpoint: discovery_document.authorization_endpoint,
                 token_endpoint: discovery_document.token_endpoint,
