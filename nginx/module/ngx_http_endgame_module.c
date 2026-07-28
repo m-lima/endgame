@@ -87,8 +87,8 @@ struct endgame_conf_oidc_ref_s {
 };
 
 struct endgame_redirect_s {
-  ngx_str_t location;
   ngx_str_t header;
+  ngx_str_t location;
 };
 
 struct endgame_ctx_s {
@@ -692,8 +692,7 @@ static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
 
 static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf) {
   ngx_str_t redirect;
-  if (egcf->redirect.header.data != NULL &&
-      ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
+  if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
                    &redirect) == NGX_OK) {
   } else if (egcf->redirect.location.data != NULL) {
     redirect = egcf->redirect.location;
@@ -782,15 +781,13 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
                            prev->login_control_header, "Endgame-AutoLogin");
   ngx_conf_merge_ptr_value(conf->whitelist, prev->whitelist, NULL);
 
-  if (conf->redirect.location.data == NULL) {
-    if (prev->redirect.location.data) {
-      conf->redirect.location.data = prev->redirect.location.data;
-      conf->redirect.location.len = prev->redirect.location.len;
-      conf->redirect.header.data = prev->redirect.header.data;
-      conf->redirect.header.len = prev->redirect.header.len;
+  if (conf->redirect.header.data == NULL) {
+    if (prev->redirect.header.data) {
+      conf->redirect.header = prev->redirect.header;
+      conf->redirect.location = prev->redirect.location;
     } else {
-      ngx_str_set(&conf->redirect.location, "here");
-      ngx_str_null(&conf->redirect.header);
+      ngx_str_set(&conf->redirect.header, "redirect");
+      ngx_str_null(&conf->redirect.location);
     }
   }
 
@@ -823,11 +820,9 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
     return "is missing endgame_key";
   }
   check_missing(discovery_url);
-  check_missing(session_name);
   check_missing(client_id);
   check_missing(client_secret);
   check_missing(client_callback_url);
-  check_missing(redirect.location);
 #undef check_missing
 
   char *error = endgame_conf_push(
@@ -1044,21 +1039,27 @@ static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
 
   ngx_str_t *arg = cf->args->elts;
 
-  if (egcf->redirect.location.data) {
+  if (egcf->redirect.header.data) {
     return "is duplicate";
   }
 
-  // Capture `endgame_redirect here`
-  if (endgame_ngx_str_t_eq(arg[1], (ngx_str_t)ngx_string("here"))) {
-    ngx_str_null(&egcf->redirect.location);
-  } else {
-    ngx_str_t value = arg[1];
+  ngx_str_t value = arg[1];
 
-    // Trim it
+  endgame_ngx_str_t_trim(&value);
+
+  if (value.len == 0) {
+    return "is just whitespace";
+  }
+
+  egcf->redirect.header = value;
+
+  if (cf->args->nelts == 3) {
+    ngx_str_t value = arg[2];
+
     endgame_ngx_str_t_trim(&value);
 
     if (value.len == 0) {
-      return "is just whitespace";
+      return "default location is just whitespace";
     }
 
     if (value.data[0] != '/' && !endgame_ngx_str_t_starts_with(
@@ -1067,21 +1068,8 @@ static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
     }
 
     egcf->redirect.location = value;
-  }
-
-  if (cf->args->nelts == 3) {
-    ngx_str_t value = arg[2];
-
-    // Trim it
-    endgame_ngx_str_t_trim(&value);
-
-    if (value.len == 0) {
-      return "header name is just whitespace";
-    }
-
-    egcf->redirect.header = value;
   } else {
-    ngx_str_null(&egcf->redirect.header);
+    ngx_str_null(&egcf->redirect.location);
   }
 
   return NGX_CONF_OK;
