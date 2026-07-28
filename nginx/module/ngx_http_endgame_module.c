@@ -147,9 +147,7 @@ static ngx_command_t endgame_commands[] = {
          NGX_CONF_TAKE1,
      endgame_conf_set_nonempty_str, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(endgame_conf_t, login_control_header), NULL},
-    {ngx_string("endgame_redirect"),
-     NGX_HTTP_MAIN_CONF | NGX_HTTP_SRV_CONF | NGX_HTTP_LOC_CONF |
-         NGX_CONF_TAKE12,
+    {ngx_string("endgame_redirect"), NGX_HTTP_LOC_CONF | NGX_CONF_TAKE12,
      endgame_conf_set_redirect, NGX_HTTP_LOC_CONF_OFFSET,
      offsetof(endgame_conf_t, redirect), NULL},
     {ngx_string("endgame_whitelist"),
@@ -345,6 +343,15 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
   }
 
   ngx_int_t result;
+  ngx_str_t redirect = get_redirect(r, egcf);
+  if (redirect.data != NULL) {
+    result = endgame_set_location_header(r, redirect);
+    if (result != NGX_OK) {
+      return result;
+    }
+    return NGX_HTTP_MOVED_TEMPORARILY;
+  }
+
   result = endgame_set_header(r, (ngx_str_t)ngx_string("X-Email"), ctx->email);
   if (result != NGX_OK) {
     return result;
@@ -525,6 +532,23 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
 
 static ngx_int_t endgame_set_location_header(ngx_http_request_t *r,
                                              ngx_str_t location) {
+  if (location.data == NULL) {
+    return NGX_OK;
+  }
+
+  for (;;) {
+    if (location.len == 0) {
+      return NGX_OK;
+    }
+
+    if (location.data[0] == '/') {
+      location.data++;
+      location.len--;
+    } else {
+      break;
+    }
+  }
+
   ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
   if (h == NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
@@ -672,16 +696,19 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
 }
 
 static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf) {
-  ngx_str_t redirect;
-  if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
-                   &redirect) == NGX_OK) {
-  } else if (egcf->redirect.location.data != NULL) {
-    redirect = egcf->redirect.location;
-  } else {
-    ngx_str_null(&redirect);
+  if (egcf->redirect.header.data != NULL) {
+    ngx_str_t redirect;
+    if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
+                     &redirect) == NGX_OK) {
+      return redirect;
+    }
+
+    if (egcf->redirect.location.data != NULL) {
+      return egcf->redirect.location;
+    }
   }
 
-  return redirect;
+  return (ngx_str_t)ngx_null_string;
 }
 
 static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
@@ -689,7 +716,7 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
                                                bool select_account) {
   ngx_str_t redirect = get_redirect(r, egcf);
   if (redirect.data == NULL) {
-    redirect = r->unparsed_uri;
+    redirect = r->uri;
   }
 
   ngx_str_t location;
@@ -731,6 +758,8 @@ static void *endgame_create_conf(ngx_conf_t *cf) {
   conf->master_key = endgame_conf_random_key();
   conf->oidc_ref.id = UNUSED_REF;
 
+  conf->redirect.header.data = NGX_CONF_UNSET_PTR;
+
   return conf;
 }
 
@@ -759,14 +788,9 @@ static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
                            prev->login_control_header, "Endgame-AutoLogin");
   ngx_conf_merge_ptr_value(conf->whitelist, prev->whitelist, NULL);
 
-  if (conf->redirect.header.data == NULL) {
-    if (prev->redirect.header.data) {
-      conf->redirect.header = prev->redirect.header;
-      conf->redirect.location = prev->redirect.location;
-    } else {
-      ngx_str_set(&conf->redirect.header, "redirect");
-      ngx_str_null(&conf->redirect.location);
-    }
+  if (conf->redirect.header.data == NGX_CONF_UNSET_PTR) {
+    ngx_str_null(&conf->redirect.header);
+    ngx_str_null(&conf->redirect.location);
   }
 
   if (!conf->key_set) {
@@ -1017,7 +1041,7 @@ static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
 
   ngx_str_t *arg = cf->args->elts;
 
-  if (egcf->redirect.header.data) {
+  if (egcf->redirect.header.data != NGX_CONF_UNSET_PTR) {
     return "is duplicate";
   }
 
