@@ -22,6 +22,7 @@ static ngx_int_t endgame_preinit(ngx_conf_t *cf);
 static ngx_int_t endgame_init(ngx_conf_t *cf);
 static ngx_int_t endgame_init_process(ngx_cycle_t *cycle);
 static ngx_int_t endgame_handler(ngx_http_request_t *r);
+static ngx_int_t endgame_logout(ngx_http_request_t *r, endgame_conf_t *egcf);
 static ngx_int_t endgame_callback(ngx_http_request_t *r, endgame_conf_t *egcf);
 static void endgame_finalizer(ngx_event_t *ev);
 static void *endgame_create_conf(ngx_conf_t *cf);
@@ -60,6 +61,7 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
                                     ngx_str_t header_name,
                                     ngx_str_t header_value);
 static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location);
+static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf);
 static ngx_int_t endgame_set_location_header(ngx_http_request_t *r,
                                              ngx_str_t header_value);
 static ngx_int_t endgame_set_cookie_header(ngx_http_request_t *r,
@@ -74,6 +76,7 @@ enum endgame_mode_e {
   ENABLED = 1,
   CALLBACK = 2,
   RESET = 3,
+  LOGOUT = 4,
 };
 
 #define UNUSED_REF (size_t)-1
@@ -288,6 +291,8 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
       ngx_http_get_module_loc_conf(r, ngx_http_endgame_module);
 
   switch (egcf->mode) {
+  case LOGOUT:
+    return endgame_logout(r, egcf);
   case RESET:
     return endgame_handle_redirect_login(r, egcf, true);
   case CALLBACK:
@@ -365,6 +370,42 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
   }
 
   return NGX_DECLINED;
+}
+
+static ngx_int_t endgame_logout(ngx_http_request_t *r, endgame_conf_t *egcf) {
+  ngx_str_t cookie_killer;
+
+  size_t len =
+      sizeof("=;Path=/;Domain=;Max-Age=0;Secure;HttpOnly;SameSite=lax") +
+      egcf->session_name.len + egcf->session_domain.len;
+  cookie_killer.data = ngx_pnalloc(r->pool, len);
+  if (cookie_killer.data == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "could not allocate cookie clearing value");
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+
+  u_char *end = ngx_snprintf(
+      cookie_killer.data, len,
+      "%V=;Path=/;Domain=%V;Max-Age=0;Secure;HttpOnly;SameSite=lax",
+      &egcf->session_name, &egcf->session_domain);
+  cookie_killer.len = end - cookie_killer.data;
+
+  ngx_int_t status = endgame_set_cookie_header(r, cookie_killer);
+  if (status != NGX_OK) {
+    return status;
+  }
+
+  ngx_str_t redirect = get_redirect(r, egcf);
+  if (redirect.data == NULL) {
+    return NGX_DECLINED;
+  }
+
+  status = endgame_set_location_header(r, redirect);
+  if (status != NGX_OK) {
+    return status;
+  }
+  return NGX_HTTP_MOVED_TEMPORARILY;
 }
 
 static ngx_int_t endgame_callback(ngx_http_request_t *r, endgame_conf_t *egcf) {
@@ -632,7 +673,7 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
 }
 
 static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
-  size_t len = (r->unparsed_uri.len + 1);
+  size_t len = r->unparsed_uri.len + 1;
 
   location->data = ngx_pnalloc(r->pool, len);
   if (location->data == NULL) {
@@ -649,16 +690,25 @@ static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
   return NGX_OK;
 }
 
-static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
-                                               endgame_conf_t *egcf,
-                                               bool select_account) {
+static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf) {
   ngx_str_t redirect;
-  if (egcf->redirect.header.data &&
+  if (egcf->redirect.header.data != NULL &&
       ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
                    &redirect) == NGX_OK) {
   } else if (egcf->redirect.location.data != NULL) {
     redirect = egcf->redirect.location;
   } else {
+    ngx_str_null(&redirect);
+  }
+
+  return redirect;
+}
+
+static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
+                                               endgame_conf_t *egcf,
+                                               bool select_account) {
+  ngx_str_t redirect = get_redirect(r, egcf);
+  if (redirect.data == NULL) {
     ngx_int_t result = extract_here(r, &redirect);
     if (result != NGX_OK) {
       return result;
@@ -710,6 +760,10 @@ static void *endgame_create_conf(ngx_conf_t *cf) {
 static char *endgame_merge_conf(ngx_conf_t *cf, void *parent, void *child) {
   endgame_conf_t *prev = parent;
   endgame_conf_t *conf = child;
+
+  if (prev->mode == LOGOUT) {
+    return "cannot have a logout as a parent";
+  }
 
   if (prev->mode == RESET) {
     return "cannot have a reset as a parent";
@@ -812,9 +866,11 @@ static char *endgame_conf_set_mode(ngx_conf_t *cf, ngx_command_t *cmd,
     egcf->mode = CALLBACK;
   } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("reset"))) {
     egcf->mode = RESET;
+  } else if (endgame_ngx_str_t_eq(*arg, (ngx_str_t)ngx_string("logout"))) {
+    egcf->mode = LOGOUT;
   } else {
     ngx_log_error(NGX_LOG_ERR, cf->log, 0, "unexpected value: '%V'", arg);
-    return "should be 'on', 'off', 'callback', or 'reset'";
+    return "should be 'on', 'off', 'callback', 'reset', or 'logout'";
   }
 
   return NGX_CONF_OK;
