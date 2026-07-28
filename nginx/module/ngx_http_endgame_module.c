@@ -60,7 +60,6 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
 static ngx_int_t endgame_set_header(ngx_http_request_t *r,
                                     ngx_str_t header_name,
                                     ngx_str_t header_value);
-static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location);
 static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf);
 static ngx_int_t endgame_set_location_header(ngx_http_request_t *r,
                                              ngx_str_t header_value);
@@ -672,24 +671,6 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
          ngx_strncasecmp(string.data, prefix.data, prefix.len) == 0;
 }
 
-static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
-  size_t len = r->unparsed_uri.len + 1;
-
-  location->data = ngx_pnalloc(r->pool, len);
-  if (location->data == NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
-                  "could not allocate redirect value");
-    return NGX_HTTP_INTERNAL_SERVER_ERROR;
-  }
-
-  u_char *p = location->data;
-  *p++ = '/';
-  p = ngx_cpymem(p, r->unparsed_uri.data, r->unparsed_uri.len);
-  location->len = p - location->data;
-
-  return NGX_OK;
-}
-
 static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf) {
   ngx_str_t redirect;
   if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
@@ -708,10 +689,7 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
                                                bool select_account) {
   ngx_str_t redirect = get_redirect(r, egcf);
   if (redirect.data == NULL) {
-    ngx_int_t result = extract_here(r, &redirect);
-    if (result != NGX_OK) {
-      return result;
-    }
+    redirect = r->unparsed_uri;
   }
 
   ngx_str_t location;
