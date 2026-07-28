@@ -728,7 +728,6 @@ dependencies = [
  "base64 0.23.0",
  "crypter",
  "endgame",
- "http",
  "jsonwebtoken",
  "libc",
  "percent-encoding",

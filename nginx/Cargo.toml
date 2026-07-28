@@ -14,7 +14,6 @@ atomic_refcell.workspace = true
 base64.workspace = true
 crypter.workspace = true
 endgame.path = "../endgame"
-http.workspace = true
 libc.workspace = true
 jsonwebtoken.workspace = true
 percent-encoding.workspace = true

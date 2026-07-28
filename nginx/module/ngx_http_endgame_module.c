@@ -60,7 +60,9 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
 static ngx_int_t endgame_set_header(ngx_http_request_t *r,
                                     ngx_str_t header_name,
                                     ngx_str_t header_value);
-static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf);
+static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location);
+static ngx_int_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf,
+                              ngx_str_t *location);
 static ngx_int_t endgame_set_location_header(ngx_http_request_t *r,
                                              ngx_str_t header_value);
 static ngx_int_t endgame_set_cookie_header(ngx_http_request_t *r,
@@ -343,9 +345,15 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
   }
 
   ngx_int_t result;
-  ngx_str_t redirect = get_redirect(r, egcf);
-  if (redirect.data != NULL) {
-    result = endgame_set_location_header(r, redirect);
+
+  ngx_str_t location;
+  result = get_redirect(r, egcf, &location);
+  if (result != NGX_OK) {
+    return result;
+  }
+
+  if (location.data != NULL) {
+    result = endgame_set_location_header(r, location);
     if (result != NGX_OK) {
       return result;
     }
@@ -402,12 +410,17 @@ static ngx_int_t endgame_logout(ngx_http_request_t *r, endgame_conf_t *egcf) {
     return status;
   }
 
-  ngx_str_t redirect = get_redirect(r, egcf);
-  if (redirect.data == NULL) {
+  ngx_str_t location;
+  status = get_redirect(r, egcf, &location);
+  if (status != NGX_OK) {
+    return status;
+  }
+
+  if (location.data == NULL) {
     return NGX_DECLINED;
   }
 
-  status = endgame_set_location_header(r, redirect);
+  status = endgame_set_location_header(r, location);
   if (status != NGX_OK) {
     return status;
   }
@@ -532,21 +545,8 @@ static ngx_int_t endgame_set_header(ngx_http_request_t *r,
 
 static ngx_int_t endgame_set_location_header(ngx_http_request_t *r,
                                              ngx_str_t location) {
-  if (location.data == NULL) {
+  if (location.data == NULL || location.len == 0) {
     return NGX_OK;
-  }
-
-  for (;;) {
-    if (location.len == 0) {
-      return NGX_OK;
-    }
-
-    if (location.data[0] == '/') {
-      location.data++;
-      location.len--;
-    } else {
-      break;
-    }
   }
 
   ngx_table_elt_t *h = ngx_list_push(&r->headers_out.headers);
@@ -695,34 +695,79 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
          ngx_strncasecmp(string.data, prefix.data, prefix.len) == 0;
 }
 
-static ngx_str_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf) {
-  if (egcf->redirect.header.data != NULL) {
-    ngx_str_t redirect;
-    if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
-                     &redirect) == NGX_OK) {
-      return redirect;
-    }
-
-    if (egcf->redirect.location.data != NULL) {
-      return egcf->redirect.location;
-    }
+// We need to know the host, so that we can redirect across server blocks
+// Just URI would mean that the redirect would be relative to the callback
+// server block
+static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
+  if (r->headers_in.host == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "missing host header");
+    return NGX_HTTP_BAD_REQUEST;
   }
 
-  return (ngx_str_t)ngx_null_string;
+  size_t len = (sizeof("https://") - 1 + r->headers_in.host->value.len +
+                r->unparsed_uri.len);
+
+  location->data = ngx_pnalloc(r->pool, len);
+  if (location->data == NULL) {
+    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                  "could not allocate redirect value");
+    return NGX_HTTP_INTERNAL_SERVER_ERROR;
+  }
+
+  u_char *end = ngx_snprintf(location->data, len, "https://%V%V",
+                             &r->headers_in.host->value, &r->unparsed_uri);
+  location->len = end - location->data;
+
+  return NGX_OK;
+}
+
+static ngx_int_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf,
+                              ngx_str_t *location) {
+  if (egcf->redirect.header.data == NULL) {
+    ngx_str_null(location);
+    return NGX_OK;
+  }
+
+  if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
+                   location) == NGX_OK) {
+    if (!endgame_ngx_str_t_starts_with(*location,
+                                       (ngx_str_t)ngx_string("https://"))) {
+      return NGX_HTTP_BAD_REQUEST;
+    }
+    return NGX_OK;
+  }
+
+  if (egcf->redirect.location.data != NULL) {
+    *location = egcf->redirect.location;
+    return NGX_OK;
+  }
+
+  ngx_str_null(location);
+  return NGX_OK;
 }
 
 static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
                                                endgame_conf_t *egcf,
                                                bool select_account) {
-  ngx_str_t redirect = get_redirect(r, egcf);
-  if (redirect.data == NULL) {
-    redirect = r->uri;
-  }
+  ngx_int_t status;
 
   ngx_str_t location;
+  status = get_redirect(r, egcf, &location);
+  if (status != NGX_OK) {
+    return status;
+  }
+
+  if (location.data == NULL) {
+    status = extract_here(r, &location);
+    if (status != NGX_OK) {
+      return status;
+    }
+  }
+
+  ngx_str_t location_header;
   EndgameError error = endgame_auth_redirect_login_url(
-      egcf->master_key, egcf->oidc_ref, redirect, select_account, &location,
-      r->pool);
+      egcf->master_key, egcf->oidc_ref, location, select_account,
+      &location_header, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to get auth url: '%V'", &error.msg);
@@ -731,7 +776,7 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
     return error.status;
   }
 
-  ngx_int_t status = endgame_set_location_header(r, location);
+  status = endgame_set_location_header(r, location_header);
   if (status != NGX_OK) {
     return status;
   }
@@ -1064,9 +1109,9 @@ static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
       return "default location is just whitespace";
     }
 
-    if (value.data[0] != '/' && !endgame_ngx_str_t_starts_with(
-                                    value, (ngx_str_t)ngx_string("https://"))) {
-      return "does not start with '/' or 'https://'";
+    if (!endgame_ngx_str_t_starts_with(value,
+                                       (ngx_str_t)ngx_string("https://"))) {
+      return "does not start with 'https://'";
     }
 
     egcf->redirect.location = value;

@@ -10,7 +10,6 @@ edition = "2024"
 atomic_refcell = "0.1.13"
 base64 = "0.23.0"
 crypter = "0.3.1"
-http = "1.4.2"
 jsonwebtoken = { version = "11.0.0", features = ["aws_lc_rs"] }
 libc = "0.2.180"
 percent-encoding = "2.3.2"

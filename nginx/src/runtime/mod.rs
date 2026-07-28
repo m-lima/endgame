@@ -64,7 +64,7 @@ pub fn get_redirect_login_url(
     master_key: crypter::Key,
     oidc_id: usize,
     oidc_signature: u32,
-    redirect: super::RedirectUri,
+    redirect: url::Url,
     select_account: bool,
 ) -> Result<url::Url, Error> {
     let configs = super::CONFIGS.borrow();
@@ -103,7 +103,7 @@ pub fn get_redirect_login_url(
     Ok(url)
 }
 
-pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, super::RedirectUri), Error>)>(
+pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Error>)>(
     query: &str,
     master_key: crypter::Key,
     finalizer: F,
@@ -175,10 +175,7 @@ fn is_code_invalid(code: &str, now: endgame::types::Timestamp) -> bool {
     }
 }
 
-async fn async_exchange(
-    state: types::State,
-    code: String,
-) -> Result<(String, super::RedirectUri), Error> {
+async fn async_exchange(state: types::State, code: String) -> Result<(String, url::Url), Error> {
     let configs = super::CONFIGS.borrow();
     let config = configs
         .get(state.oidc_id)
@@ -292,7 +289,6 @@ fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::RedirectUri;
     use super::*;
 
     pub fn random_array<const L: usize>() -> [u8; L] {
@@ -306,7 +302,7 @@ mod tests {
         let state = types::State {
             nonce: random_array(),
             timestamp: endgame::types::Timestamp::now(),
-            redirect: RedirectUri::from_static("http://localhost"),
+            redirect: url::Url::parse("http://localhost").unwrap(),
             oidc_id: usize::from_ne_bytes(random_array()),
             oidc_signature: rand::random(),
         };
