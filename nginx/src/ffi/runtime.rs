@@ -1,5 +1,5 @@
 use super::{
-    super::runtime as oidc,
+    super::{RedirectUri, runtime as oidc},
     types::{EndgameError, EndgameKey, EndgameResult, ngx_str_t},
 };
 
@@ -48,7 +48,7 @@ macro_rules! arg {
             value
         }};
         (url $value: ident) => {
-            attempt!(ok url::Url::parse(arg!(str $value)), $value, "not a valid URL")
+            attempt!(or RedirectUri::parse(arg!(str $value)), $value, "not a valid URL")
         };
     }
 
@@ -107,7 +107,7 @@ pub extern "C" fn endgame_auth_exchange_token(
 ) -> EndgameError {
     let request = request as usize;
     let pool = pool as usize;
-    let finalizer = move |result: Result<(String, url::Url), oidc::Error>| {
+    let finalizer = move |result: Result<(String, RedirectUri), oidc::Error>| {
         let request = request as _;
         let pool = pool as _;
 

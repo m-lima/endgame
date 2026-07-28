@@ -1,8 +1,10 @@
+use super::super::RedirectUri;
+
 #[derive(Debug, PartialEq)]
 pub struct State {
     pub nonce: [u8; 32],
     pub timestamp: endgame::types::Timestamp,
-    pub redirect: url::Url,
+    pub redirect: RedirectUri,
     pub oidc_id: usize,
     pub oidc_signature: u32,
 }
@@ -12,7 +14,7 @@ impl State {
     pub fn new(
         nonce: [u8; 32],
         timestamp: endgame::types::Timestamp,
-        redirect: url::Url,
+        redirect: RedirectUri,
         oidc_id: usize,
         oidc_signature: u32,
     ) -> Self {
@@ -28,13 +30,13 @@ impl State {
 
 impl endgame::types::io::Out for State {
     fn size(&self) -> usize {
-        self.nonce.size() + self.timestamp.size() + self.redirect.as_str().size()
+        self.nonce.size() + self.timestamp.size() + self.redirect.as_ref().size()
     }
 
     fn write<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
         self.nonce.write(writer)?;
         self.timestamp.write(writer)?;
-        self.redirect.as_str().write(writer)?;
+        self.redirect.as_ref().write(writer)?;
         self.oidc_id.write(writer)?;
         self.oidc_signature.write(writer)
     }
@@ -45,7 +47,7 @@ impl endgame::types::io::In for State {
         let nonce = <[u8; 32]>::read(reader)?;
         let timestamp = endgame::types::Timestamp::read(reader)?;
         let redirect = Option::read(reader)?
-            .and_then(|ref u| url::Url::parse(u).ok())
+            .and_then(|ref u| RedirectUri::parse(u))
             .ok_or(std::io::ErrorKind::InvalidData)?;
         let oidc_id = usize::read(reader)?;
         let oidc_signature = u32::read(reader)?;
@@ -62,7 +64,7 @@ impl endgame::types::io::In for State {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::tests::random_array, State};
+    use super::{super::tests::random_array, RedirectUri, State};
 
     fn round_trip<T: endgame::types::io::In + endgame::types::io::Out>(
         value: &T,
@@ -77,7 +79,7 @@ mod tests {
         let original = State {
             nonce: random_array(),
             timestamp: endgame::types::Timestamp::now(),
-            redirect: url::Url::parse("http://localhost").unwrap(),
+            redirect: RedirectUri::from_static("http://localhost"),
             oidc_id: usize::from_ne_bytes(random_array()),
             oidc_signature: rand::random(),
         };

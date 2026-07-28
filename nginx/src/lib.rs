@@ -18,6 +18,29 @@ mod ffi;
 mod runtime;
 
 #[repr(transparent)]
+#[derive(Debug, PartialEq)]
+struct RedirectUri(String);
+
+impl RedirectUri {
+    fn parse(uri: &str) -> Option<Self> {
+        uri.parse::<http::Uri>()
+            .ok()
+            .map(|uri| Self(uri.to_string()))
+    }
+
+    #[cfg(test)]
+    fn from_static(uri: &'static str) -> Self {
+        Self(http::Uri::from_static(uri).to_string())
+    }
+}
+
+impl AsRef<str> for RedirectUri {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+#[repr(transparent)]
 #[derive(Debug, Clone)]
 struct Jwks(Vec<Jwk>);
 

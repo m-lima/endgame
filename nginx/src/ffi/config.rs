@@ -29,7 +29,7 @@ pub extern "C" fn endgame_conf_random_key() -> EndgameKey {
     let mut key = EndgameKey {
         bytes: Default::default(),
     };
-    rand::RngCore::fill_bytes(&mut rand::rng(), &mut key.bytes);
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut key.bytes);
     key
 }
 

@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-base64 = { workspace = true }
-crypter = { workspace = true }
+base64.workspace = true
+crypter.workspace = true
 
 [dev-dependencies]
-rand = { workspace = true }
+rand.workspace = true

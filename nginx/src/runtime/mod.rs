@@ -64,7 +64,7 @@ pub fn get_redirect_login_url(
     master_key: crypter::Key,
     oidc_id: usize,
     oidc_signature: u32,
-    redirect: url::Url,
+    redirect: super::RedirectUri,
     select_account: bool,
 ) -> Result<url::Url, Error> {
     let configs = super::CONFIGS.borrow();
@@ -75,7 +75,7 @@ pub fn get_redirect_login_url(
 
     let state = {
         let mut nonce = [0; 32];
-        rand::RngCore::fill_bytes(&mut rand::rng(), &mut nonce);
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut nonce);
         let timestamp = endgame::types::Timestamp::now();
 
         types::State::new(nonce, timestamp, redirect, oidc_id, oidc_signature)
@@ -103,7 +103,7 @@ pub fn get_redirect_login_url(
     Ok(url)
 }
 
-pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, url::Url), Error>)>(
+pub fn exchange_token<F: 'static + Send + FnOnce(Result<(String, super::RedirectUri), Error>)>(
     query: &str,
     master_key: crypter::Key,
     finalizer: F,
@@ -175,7 +175,10 @@ fn is_code_invalid(code: &str, now: endgame::types::Timestamp) -> bool {
     }
 }
 
-async fn async_exchange(state: types::State, code: String) -> Result<(String, url::Url), Error> {
+async fn async_exchange(
+    state: types::State,
+    code: String,
+) -> Result<(String, super::RedirectUri), Error> {
     let configs = super::CONFIGS.borrow();
     let config = configs
         .get(state.oidc_id)
@@ -289,11 +292,12 @@ fn make_cookie(jwt: Jwt, config: &super::OidcConfig) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::RedirectUri;
     use super::*;
 
     pub fn random_array<const L: usize>() -> [u8; L] {
         let mut value = [0; L];
-        rand::RngCore::fill_bytes(&mut rand::rng(), &mut value);
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut value);
         value
     }
 
@@ -302,7 +306,7 @@ mod tests {
         let state = types::State {
             nonce: random_array(),
             timestamp: endgame::types::Timestamp::now(),
-            redirect: url::Url::parse("http://localhost").unwrap(),
+            redirect: RedirectUri::from_static("http://localhost"),
             oidc_id: usize::from_ne_bytes(random_array()),
             oidc_signature: rand::random(),
         };
