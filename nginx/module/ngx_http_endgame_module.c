@@ -632,13 +632,7 @@ static ngx_int_t endgame_ngx_str_t_starts_with(ngx_str_t string,
 }
 
 static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
-  if (r->headers_in.host == NULL) {
-    ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "missing Host header");
-    return NGX_HTTP_BAD_REQUEST;
-  }
-
-  size_t len = (sizeof("https://") - 1 + r->headers_in.host->value.len +
-                r->unparsed_uri.len);
+  size_t len = (r->unparsed_uri.len + 1);
 
   location->data = ngx_pnalloc(r->pool, len);
   if (location->data == NULL) {
@@ -647,9 +641,10 @@ static ngx_int_t extract_here(ngx_http_request_t *r, ngx_str_t *location) {
     return NGX_HTTP_INTERNAL_SERVER_ERROR;
   }
 
-  u_char *end = ngx_snprintf(location->data, len, "https://%V%V",
-                             &r->headers_in.host->value, &r->unparsed_uri);
-  location->len = end - location->data;
+  u_char *p = location->data;
+  *p++ = '/';
+  p = ngx_cpymem(p, r->unparsed_uri.data, r->unparsed_uri.len);
+  location->len = p - location->data;
 
   return NGX_OK;
 }
@@ -661,8 +656,7 @@ static ngx_int_t endgame_handle_redirect_login(ngx_http_request_t *r,
   if (egcf->redirect.header.data &&
       ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
                    &redirect) == NGX_OK) {
-  } else if (endgame_ngx_str_t_starts_with(egcf->redirect.location,
-                                           (ngx_str_t)ngx_string("https://"))) {
+  } else if (egcf->redirect.location.data != NULL) {
     redirect = egcf->redirect.location;
   } else {
     ngx_int_t result = extract_here(r, &redirect);
@@ -998,8 +992,10 @@ static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
     return "is duplicate";
   }
 
-  // Capture `endgame_whitelist here`
-  if (!endgame_ngx_str_t_eq(arg[1], (ngx_str_t)ngx_string("here"))) {
+  // Capture `endgame_redirect here`
+  if (endgame_ngx_str_t_eq(arg[1], (ngx_str_t)ngx_string("here"))) {
+    ngx_str_null(&egcf->redirect.location);
+  } else {
     ngx_str_t value = arg[1];
 
     // Trim it
@@ -1009,9 +1005,9 @@ static char *endgame_conf_set_redirect(ngx_conf_t *cf, ngx_command_t *cmd,
       return "is just whitespace";
     }
 
-    if (!endgame_ngx_str_t_starts_with(value,
-                                       (ngx_str_t)ngx_string("https://"))) {
-      return "does not start with 'https://'";
+    if (value.data[0] != '/' && !endgame_ngx_str_t_starts_with(
+                                    value, (ngx_str_t)ngx_string("https://"))) {
+      return "does not start with '/' or 'https://'";
     }
 
     egcf->redirect.location = value;
