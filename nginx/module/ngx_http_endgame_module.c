@@ -730,6 +730,21 @@ static ngx_int_t get_redirect(ngx_http_request_t *r, endgame_conf_t *egcf,
 
   if (ngx_http_arg(r, egcf->redirect.header.data, egcf->redirect.header.len,
                    location) == NGX_OK) {
+    ngx_str_t query;
+    query.data = ngx_pnalloc(r->pool, location->len);
+    if (query.data == NULL) {
+      ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
+                    "could not allocate redirect query param");
+      return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    u_char *src = location->data;
+    u_char *dst = query.data;
+
+    ngx_unescape_uri(&dst, &src, location->len, 0);
+    location->data = query.data;
+    location->len = dst - location->data;
+
     if (!endgame_ngx_str_t_starts_with(*location,
                                        (ngx_str_t)ngx_string("https://"))) {
       return NGX_HTTP_BAD_REQUEST;
