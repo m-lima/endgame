@@ -50,6 +50,46 @@ impl ngx_str_t {
             })
         }
     }
+
+    pub const fn as_option<'a>(self) -> Option<&'a [u8]> {
+        if self.data.is_null() {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(self.data, self.len) })
+        }
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn endgame_ngx_str_t_trim(string: &mut ngx_str_t) {
+        if let Some(trimmed) = string.as_option().map(<[u8]>::trim_ascii) {
+            *string = ngx_str_t {
+                len: trimmed.len(),
+                data: trimmed.as_ptr().cast_mut(),
+            };
+        }
+    }
+}
+
+// allow(non_camel_case_types): to match the nginx type
+#[allow(non_camel_case_types)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug)]
+pub struct ngx_table_elt_t {
+    hash: usize,
+    key: ngx_str_t,
+    value: ngx_str_t,
+    lowcase_key: *mut u8,
+    next: *mut ngx_table_elt_t,
+}
+
+impl ngx_table_elt_t {
+    pub const fn next(&self) -> Option<&Self> {
+        unsafe { self.next.as_ref() }
+    }
+
+    pub const fn value(&self) -> Option<&[u8]> {
+        self.value.as_option()
+    }
 }
 
 #[repr(C)]
@@ -75,26 +115,6 @@ impl From<EndgameKey> for crypter::Key {
 pub struct EndgameOidc {
     pub id: usize,
     pub signature: u32,
-}
-
-impl ngx_str_t {
-    pub const fn as_option<'a>(self) -> Option<&'a [u8]> {
-        if self.data.is_null() {
-            None
-        } else {
-            Some(unsafe { std::slice::from_raw_parts(self.data, self.len) })
-        }
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn endgame_ngx_str_t_trim(string: &mut ngx_str_t) {
-        if let Some(trimmed) = string.as_option().map(<[u8]>::trim_ascii) {
-            *string = ngx_str_t {
-                len: trimmed.len(),
-                data: trimmed.as_ptr().cast_mut(),
-            };
-        }
-    }
 }
 
 #[repr(C)]

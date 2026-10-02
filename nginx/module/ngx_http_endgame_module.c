@@ -302,13 +302,7 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
     return NGX_DECLINED;
   }
 
-  ngx_table_elt_t *cookie;
-  ngx_str_t value;
-
-  cookie = ngx_http_parse_multi_header_lines(r, r->headers_in.cookie,
-                                             &egcf->session_name, &value);
-
-  if (cookie == NULL || value.len == 0) {
+  if (r->headers_in.cookie == NULL) {
     return endgame_handle_unauthed(r, egcf);
   }
 
@@ -318,9 +312,9 @@ static ngx_int_t endgame_handler(ngx_http_request_t *r) {
   }
   ngx_http_set_ctx(r, ctx, ngx_http_endgame_module);
 
-  EndgameError error =
-      endgame_token_decrypt(egcf->key, value, &ctx->email, &ctx->given,
-                            &ctx->family, &ctx->picture, r->pool);
+  EndgameError error = endgame_token_decrypt(
+      egcf->key, r->headers_in.cookie, egcf->session_name, &ctx->email,
+      &ctx->given, &ctx->family, &ctx->picture, r->pool);
   if (error.msg.data != NULL) {
     ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
                   "failed to decrypt cookie: '%V'", &error.msg);

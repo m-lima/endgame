@@ -1,6 +1,6 @@
 use super::{
     super::runtime as oidc,
-    types::{EndgameError, EndgameKey, EndgameResult, ngx_str_t},
+    types::{EndgameError, EndgameKey, EndgameResult, ngx_str_t, ngx_table_elt_t},
 };
 
 macro_rules! bail {
@@ -176,7 +176,8 @@ pub extern "C" fn endgame_auth_exchange_token(
 #[unsafe(no_mangle)]
 pub extern "C" fn endgame_token_decrypt(
     key: EndgameKey,
-    src: ngx_str_t,
+    cookies: &ngx_table_elt_t,
+    name: ngx_str_t,
     email: &mut ngx_str_t,
     given_name: &mut ngx_str_t,
     family_name: &mut ngx_str_t,
@@ -190,21 +191,92 @@ pub extern "C" fn endgame_token_decrypt(
             }
         };
     }
+
     nullify!(email);
     nullify!(given_name);
     nullify!(family_name);
     nullify!(picture);
 
-    let src = arg!(bytes src);
+    let name = arg!(bytes name);
+    let mut cookies = Some(cookies);
 
-    if let Some(token) = endgame::dencrypt::decrypt::<endgame::types::Token>(key.bytes, src)
-        .filter(|t| t.timestamp >= endgame::types::Timestamp::now())
-    {
-        *email = to_str!(token.email, pool);
-        *given_name = to_str!(opt token.given_name, pool);
-        *family_name = to_str!(opt token.family_name, pool);
-        *picture = to_str!(opt token.picture, pool);
+    while let Some(cookie_line) = cookies {
+        let Some(cookie_bytes) = cookie_line.value() else {
+            continue;
+        };
+
+        for cookie in cookie_bytes.split(|b| *b == b';') {
+            let Some(cookie) = extract_cookie(name, cookie) else {
+                continue;
+            };
+
+            if let Some(token) =
+                endgame::dencrypt::decrypt::<endgame::types::Token>(key.bytes, cookie)
+                    .filter(|t| t.timestamp >= endgame::types::Timestamp::now())
+            {
+                *email = to_str!(token.email, pool);
+                *given_name = to_str!(opt token.given_name, pool);
+                *family_name = to_str!(opt token.family_name, pool);
+                *picture = to_str!(opt token.picture, pool);
+                break;
+            }
+        }
+        cookies = cookie_line.next();
     }
 
     EndgameError::none()
+}
+
+fn extract_cookie<'c>(name: &[u8], cookie: &'c [u8]) -> Option<&'c [u8]> {
+    let cookie = cookie.trim_ascii_start();
+    if cookie.len() <= name.len() || !cookie[..name.len()].eq_ignore_ascii_case(name) {
+        return None;
+    }
+
+    let mut cookie = &cookie[name.len()..];
+    while !cookie.is_empty() {
+        if cookie[0].is_ascii_whitespace() {
+            cookie = &cookie[1..];
+        } else if cookie[0] == b'=' {
+            cookie = &cookie[1..];
+            break;
+        } else {
+            return None;
+        }
+    }
+
+    let cookie = cookie.trim_ascii_start();
+    if cookie.is_empty() {
+        None
+    } else {
+        Some(cookie)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_empty() {
+        assert_eq!(extract_cookie(b"name", b""), None);
+    }
+
+    #[test]
+    fn extract_wrong_name() {
+        assert_eq!(extract_cookie(b"name", b"namer=123"), None);
+    }
+
+    #[test]
+    fn extract_simple() {
+        assert_eq!(extract_cookie(b"name", b"name=123"), Some("123".as_bytes()));
+    }
+
+    #[test]
+    fn extract_trim() {
+        assert_eq!(
+            extract_cookie(b"name", b" 	name	 =	 123	 "),
+            Some("123	 ".as_bytes())
+        );
+    }
 }
